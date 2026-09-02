@@ -20,6 +20,10 @@ apply from: '../build.dependencies.gradle'
 android {
     namespace = 'org.firstinspires.ftc.teamcode'
 
+    kotlinOptions{
+        jvmTarget = '1.8'
+    }
+
     packagingOptions {
         jniLibs.useLegacyPackaging true
     }
