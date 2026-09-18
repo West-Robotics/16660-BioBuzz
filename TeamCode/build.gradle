@@ -28,8 +28,18 @@ android {
         jniLibs.useLegacyPackaging true
     }
 }
+repositories {
+    maven {
+        url 'https://repo.dairy.foundation/releases'
+    }
+}
 
 dependencies {
     implementation project(':FtcRobotController')
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+    //testing out a control library
+    implementation 'dev.nextftc.v2:control:0.2.0'
+    implementation 'dev.nextftc.v2:hardware:0.2.0'
+    implementation 'dev.nextftc.v2:robot:0.2.0'
 }
+
