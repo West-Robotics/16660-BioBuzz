@@ -10,6 +10,7 @@ import org.firstinspires.ftc.teamcode.vision.VisionConfig
 import org.firstinspires.ftc.vision.VisionProcessor
 import org.firstinspires.ftc.vision.apriltag.AprilTagDetection
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
+import org.firstinspires.ftc.vision.apriltag.AprilTagSingleDetection
 import org.firstinspires.ftc.vision.opencv.ColorBlobLocatorProcessor
 import org.opencv.core.Mat
 import org.opencv.core.Point
@@ -114,6 +115,9 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
 
         var best: HiveTarget? = null
         for (tag in tags) {
+            // SDK 12.0: id/center/corners/metadata live on AprilTagSingleDetection.
+            // Hive tags are single tags, so skip any cluster detections.
+            if (tag !is AprilTagSingleDetection) continue
             if (tag.id !in hiveIds) continue
             val target = toTarget(tag) ?: continue
             if (best == null || target.pixelDiagonal > best.pixelDiagonal) best = target
@@ -121,7 +125,7 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
         return best
     }
 
-    private fun toTarget(tag: AprilTagDetection): HiveTarget? {
+    private fun toTarget(tag: AprilTagSingleDetection): HiveTarget? {
         val center = tag.center ?: return null
         val diag = pixelDiagonalOf(tag.corners)
 

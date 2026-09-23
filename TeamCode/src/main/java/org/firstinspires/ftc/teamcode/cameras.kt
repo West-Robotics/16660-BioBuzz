@@ -5,6 +5,7 @@ import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName
 import org.firstinspires.ftc.vision.VisionPortal
 import com.qualcomm.robotcore.hardware.HardwareMap
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
+import org.firstinspires.ftc.vision.apriltag.AprilTagSingleDetection
 import org.firstinspires.ftc.vision.opencv.ColorBlobLocatorProcessor
 import org.firstinspires.ftc.vision.opencv.ColorRange
 import org.opencv.core.*
@@ -108,8 +109,11 @@ class VisionSystem(hardwareMap: HardwareMap) {
         val groundDetections = mutableListOf<Detection>()
 
         // 1. Process AprilTags (High Portal)
+        // SDK 12.0: id/center/metadata/corners live on AprilTagSingleDetection;
+        // clusters are a separate type. Hive tags are single tags, so skip clusters.
         val tags = aprilTagProcessor.detections
         for (tag in tags) {
+            if (tag !is AprilTagSingleDetection) continue
             if (tag.metadata != null) {
                 highDetections.add(
                     Detection(
