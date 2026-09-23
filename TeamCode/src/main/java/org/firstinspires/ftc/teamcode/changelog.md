@@ -1,0 +1,2 @@
+## Before you push something, please write a summary of your changes, if your changes are large enough to sanction one, about what things were implemented, new apis, etc.
+### You can delete what the last person put here, that is in git history
