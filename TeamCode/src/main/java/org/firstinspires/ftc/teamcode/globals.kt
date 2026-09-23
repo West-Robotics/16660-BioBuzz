@@ -112,8 +112,12 @@ const val FRONT_CAM_NAME = GROUND_CAM_NAME // MEASURE: camera facing forward at 
 
 // MEASURE: the IMU device name in the hardware configuration ("imu" is the REV Hub default).
 const val RR_IMU_NAME = "imu"
-const val CAMERA_WIDTH_PIXELS = 1500
-const val CAMERA_HEIGHT_PIXELS = 750
+// HIGH (UP) camera resolution — must be a mode the Logitech C270 actually
+// supports (640x480, 800x448, 1280x720) and must match VisionTuning's
+// UP_CAM_WIDTH/HEIGHT, which the UP-camera intrinsics (VisionConfig.UP_CAMERA)
+// are calibrated for. Calibrate real values with the "Camera Calibration (C270)" OpMode.
+const val CAMERA_WIDTH_PIXELS = 800
+const val CAMERA_HEIGHT_PIXELS = 448
 const val GROUND_CAM_WIDTH = 640
 const val GROUND_CAM_HEIGHT = 480
 const val C270_FOCAL_LENGTH_PIXELS = 543.0
