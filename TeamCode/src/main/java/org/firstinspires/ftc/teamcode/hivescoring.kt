@@ -8,6 +8,7 @@ import org.firstinspires.ftc.robotcore.internal.camera.calibration.CameraCalibra
 import org.firstinspires.ftc.teamcode.vision.CameraId
 import org.firstinspires.ftc.teamcode.vision.VisionConfig
 import org.firstinspires.ftc.vision.VisionProcessor
+import org.firstinspires.ftc.vision.apriltag.AprilTagClusterDetection
 import org.firstinspires.ftc.vision.apriltag.AprilTagDetection
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
 import org.firstinspires.ftc.vision.apriltag.AprilTagSingleDetection
@@ -70,17 +71,26 @@ object HiveScoringConfig {
 /** Where the robot currently sits relative to the shooting window. */
 enum class ScoringZone { NO_TAG, TOO_CLOSE, IN_RANGE, TOO_FAR, ALIGNED }
 
-/** One hive tag measurement (immutable snapshot). */
+/**
+ * One hive target measurement (immutable snapshot). Official BioBuzz hives are
+ * AprilTag CLUSTERS (SDK 12.0), so a target is usually a cluster; the legacy
+ * single-tag path remains as a fallback for uncalibrated/custom tag setups.
+ */
 data class HiveTarget(
+    /** Single-tag ID, or -1 when this target is a hive CLUSTER. */
     val tagId: Int,
-    /** Straight-line distance to the tag, cm. */
+    /** "RED SCORING" etc. for clusters, "Tag 34" for the single-tag fallback. */
+    val label: String,
+    /** Straight-line distance to the aim point (tag or cluster origin), cm. */
     val distanceCm: Double,
-    /** + = tag is right of the camera center, degrees. */
+    /** + = target is right of the camera center, degrees. */
     val bearingDeg: Double,
     val screenX: Double,
     val screenY: Double,
-    /** Tag diagonal in pixels — bigger = closer/cleaner detection. */
+    /** Single tags only: tag diagonal in pixels — bigger = closer/cleaner. */
     val pixelDiagonal: Double,
+    /** Clusters only: percent of the cluster's tags currently visible. */
+    val percentClusterFound: Int,
     /** True when the full 6-DOF pose was available (tag library + calibration). */
     val fromFtcPose: Boolean,
     val timestampNanos: Long,
@@ -89,14 +99,17 @@ data class HiveTarget(
 /**
  * Reads hive AprilTag detections and turns them into range/bearing.
  *
- * Two estimation paths, best available wins:
- *  1. [AprilTagDetection.ftcPose] — full pose, needs tag-library metadata AND
- *     a calibrated camera (teamwebcamcalibrations.xml).
- *  2. Pixel-geometry fallback — the tag size is known
+ * Targeting paths, best available wins:
+ *  1. CLUSTERS (preferred, SDK 12.0): official BioBuzz hives are 4-tag
+ *     clusters whose origin is the CENTER OF THE CELL OPENING, so the cluster
+ *     ftcPose points directly at the scoring aim point. Requires the game tag
+ *     library (default) AND a calibrated camera (teamwebcamcalibrations.xml).
+ *  2. Single tags + [AprilTagDetection.ftcPose] — full pose, needs single-tag
+ *     library metadata AND a calibrated camera.
+ *  3. Pixel-geometry fallback for single tags — the tag size is known
  *     (APRILTAG_PHYSICAL_WIDTH_MM), so distance = focal * width / pixels and
- *     bearing = atan(pixel offset / focal). This works even with NO tag
- *     library (custom BioBuzz tags 30-45 have no metadata in the stock
- *     library), which is why it exists.
+ *     bearing = atan(pixel offset / focal). Works with no library metadata;
+ *     only fires when tags are reported as singles (custom tag setups).
  */
 class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
 
@@ -104,7 +117,7 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
 
     private val upIntrinsics = VisionConfig.calibrationFor(CameraId.UP).intrinsics
 
-    /** Latest hive target (strongest tag), or null if none visible. */
+    /** Latest hive target (best visible cluster, else best single tag), or null. */
     fun update(): HiveTarget? {
         // The detections list is owned by the vision thread — snapshot defensively.
         val tags = try {
@@ -113,16 +126,57 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
             emptyList()
         }
 
-        var best: HiveTarget? = null
+        // SDK 12.0: hives arrive as AprilTagClusterDetection. Clusters are the
+        // preferred target — their origin is the Cell-opening center, the exact
+        // scoring aim point. Single tags remain a fallback path.
+        var bestCluster: HiveTarget? = null
+        var bestSingle: HiveTarget? = null
         for (tag in tags) {
-            // SDK 12.0: id/center/corners/metadata live on AprilTagSingleDetection.
-            // Hive tags are single tags, so skip any cluster detections.
-            if (tag !is AprilTagSingleDetection) continue
-            if (tag.id !in hiveIds) continue
-            val target = toTarget(tag) ?: continue
-            if (best == null || target.pixelDiagonal > best.pixelDiagonal) best = target
+            when (tag) {
+                is AprilTagClusterDetection -> {
+                    if (tag.metadata?.shortName !in HIVE_CLUSTER_NAMES) continue
+                    val target = clusterToTarget(tag) ?: continue
+                    if (bestCluster == null ||
+                        target.percentClusterFound > bestCluster.percentClusterFound
+                    ) bestCluster = target
+                }
+                is AprilTagSingleDetection -> {
+                    if (tag.id !in hiveIds) continue
+                    val target = toTarget(tag) ?: continue
+                    if (bestSingle == null ||
+                        target.pixelDiagonal > bestSingle.pixelDiagonal
+                    ) bestSingle = target
+                }
+            }
         }
-        return best
+        return bestCluster ?: bestSingle
+    }
+
+    /**
+     * CLUSTER path (SDK 12.0, preferred): the pose is relative to the cluster
+     * origin — the center of the Cell opening — so range/bearing are the true
+     * scoring geometry. NOTE: clusters expose no pixel corners/center, so this
+     * path requires the ftcPose (calibrated camera); there is no pixel fallback.
+     */
+    private fun clusterToTarget(cluster: AprilTagClusterDetection): HiveTarget? {
+        val ftc = cluster.ftcPose ?: return null
+        val name = cluster.metadata?.shortName ?: return null
+        // Clusters do not report a screen position — reconstruct an approximate
+        // one from the bearing so the preview overlay lands near the hive.
+        val screenX = upIntrinsics.centerX +
+            upIntrinsics.focalLengthPx * Math.tan(Math.toRadians(ftc.bearing))
+        return HiveTarget(
+            tagId = -1,
+            label = name,
+            distanceCm = ftc.range * 2.54,
+            bearingDeg = ftc.bearing.toDouble(),
+            screenX = screenX,
+            screenY = upIntrinsics.centerY,
+            pixelDiagonal = 0.0,
+            percentClusterFound = cluster.percentClusterFound,
+            fromFtcPose = true,
+            timestampNanos = cluster.frameAcquisitionNanoTime,
+        )
     }
 
     private fun toTarget(tag: AprilTagSingleDetection): HiveTarget? {
@@ -133,11 +187,13 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
         if (ftc != null) {
             return HiveTarget(
                 tagId = tag.id,
+                label = "Tag ${tag.id}",
                 distanceCm = ftc.range * 2.54,
                 bearingDeg = ftc.bearing.toDouble(),
                 screenX = center.x,
                 screenY = center.y,
                 pixelDiagonal = diag,
+                percentClusterFound = 0,
                 fromFtcPose = true,
                 timestampNanos = tag.frameAcquisitionNanoTime,
             )
@@ -152,11 +208,13 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
         )
         return HiveTarget(
             tagId = tag.id,
+            label = "Tag ${tag.id}",
             distanceCm = distanceCm,
             bearingDeg = bearingDeg,
             screenX = center.x,
             screenY = center.y,
             pixelDiagonal = diag,
+            percentClusterFound = 0,
             fromFtcPose = false,
             timestampNanos = tag.frameAcquisitionNanoTime,
         )
@@ -216,9 +274,14 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
         if (target == null) {
             t.addData("HIVE tag", "none visible")
         } else {
+            val quality = if (target.percentClusterFound > 0) {
+                String.format(Locale.US, "%d%% cluster", target.percentClusterFound)
+            } else {
+                String.format(Locale.US, "%.0f px", target.pixelDiagonal)
+            }
             t.addData(
-                "HIVE tag ${target.tagId}",
-                String.format(Locale.US, "%.1f cm, %.1f deg, %.0f px", target.distanceCm, target.bearingDeg, target.pixelDiagonal) +
+                "HIVE ${target.label}",
+                String.format(Locale.US, "%.1f cm, %.1f deg, %s", target.distanceCm, target.bearingDeg, quality) +
                     if (target.fromFtcPose) " [ftcPose]" else " [pixel]",
             )
         }
@@ -407,8 +470,8 @@ class TagInfoOverlay : VisionProcessor {
         }
 
         val text = String.format(
-            Locale.US, "%d: %.0fcm %+.1f° %s",
-            t.tagId, t.distanceCm, t.bearingDeg, zone.name,
+            Locale.US, "%s: %.0fcm %+.1f° %s",
+            t.label, t.distanceCm, t.bearingDeg, zone.name,
         )
         val x = (t.screenX * scaleBmpPxToCanvasPx).toFloat() - 30f
         val y = (t.screenY * scaleBmpPxToCanvasPx).toFloat() - 40f

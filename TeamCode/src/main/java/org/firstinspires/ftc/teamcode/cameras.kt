@@ -5,6 +5,7 @@ import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName
 import org.firstinspires.ftc.vision.VisionPortal
 import com.qualcomm.robotcore.hardware.HardwareMap
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
+import org.firstinspires.ftc.vision.apriltag.AprilTagClusterDetection
 import org.firstinspires.ftc.vision.apriltag.AprilTagSingleDetection
 import org.firstinspires.ftc.vision.opencv.ColorBlobLocatorProcessor
 import org.firstinspires.ftc.vision.opencv.ColorRange
@@ -109,25 +110,44 @@ class VisionSystem(hardwareMap: HardwareMap) {
         val groundDetections = mutableListOf<Detection>()
 
         // 1. Process AprilTags (High Portal)
-        // SDK 12.0: id/center/metadata/corners live on AprilTagSingleDetection;
-        // clusters are a separate type. Hive tags are single tags, so skip clusters.
+        // SDK 12.0: official BioBuzz hives are 4-tag CLUSTERS whose origin is the
+        // Cell-opening center — the cluster pose IS the aim point. The stock
+        // BioBuzz library contains NO single tags, so clusters are the normal
+        // path; the single-tag branch remains for custom/single-tag libraries.
         val tags = aprilTagProcessor.detections
         for (tag in tags) {
-            if (tag !is AprilTagSingleDetection) continue
-            if (tag.metadata != null) {
-                highDetections.add(
-                    Detection(
-                        label = "Hive Tag ${tag.id}",
-                        distanceMm = tag.ftcPose.range * 25.4,
-                        angleDegrees = tag.ftcPose.bearing,
-                        xMm = tag.ftcPose.x * 25.4,
-                        yMm = tag.ftcPose.y * 25.4,
-                        zMm = tag.ftcPose.z * 25.4,
-                        metadata = "ID ${tag.id}",
-                        screenX = tag.center.x.toFloat(),
-                        screenY = tag.center.y.toFloat()
+            when (tag) {
+                is AprilTagClusterDetection -> {
+                    if (tag.metadata?.shortName !in HIVE_CLUSTER_NAMES) continue
+                    val ftc = tag.ftcPose ?: continue
+                    highDetections.add(
+                        Detection(
+                            label = "Hive Cluster ${tag.metadata.shortName}",
+                            distanceMm = ftc.range * 25.4,
+                            angleDegrees = ftc.bearing,
+                            xMm = ftc.x * 25.4,
+                            yMm = ftc.y * 25.4,
+                            zMm = ftc.z * 25.4,
+                            metadata = "${tag.percentClusterFound}% tags found",
+                        )
                     )
-                )
+                }
+                is AprilTagSingleDetection -> {
+                    if (tag.metadata == null) continue
+                    highDetections.add(
+                        Detection(
+                            label = "Hive Tag ${tag.id}",
+                            distanceMm = tag.ftcPose.range * 25.4,
+                            angleDegrees = tag.ftcPose.bearing,
+                            xMm = tag.ftcPose.x * 25.4,
+                            yMm = tag.ftcPose.y * 25.4,
+                            zMm = tag.ftcPose.z * 25.4,
+                            metadata = "ID ${tag.id}",
+                            screenX = tag.center.x.toFloat(),
+                            screenY = tag.center.y.toFloat()
+                        )
+                    )
+                }
             }
         }
 

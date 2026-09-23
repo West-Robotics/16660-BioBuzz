@@ -109,7 +109,8 @@ class StrategicController(private val vision: VisionSystem, private val drivetra
      * Calculates the relative position of the hive and converts it to a field coordinate.
      */
     private fun updateHivePosition(detections: List<VisionSystem.Detection>) {
-        val hiveTags = detections.filter { it.label.startsWith("Hive Tag") }
+        // "Hive Tag N" (single-tag library) or "Hive Cluster RED SCORING" (SDK 12.0 game library).
+        val hiveTags = detections.filter { it.label.startsWith("Hive") }
         if (hiveTags.isNotEmpty()) {
             val tag = hiveTags.first()
             // Convert the camera-relative pose to a global target.

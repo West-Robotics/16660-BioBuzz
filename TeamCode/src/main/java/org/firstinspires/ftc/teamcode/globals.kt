@@ -127,6 +127,23 @@ const val ROBOT_PHYSICAL_WIDTH_MM = 450.0 // ~18 inch robot footprint, for range
 val RED_HIVE_TAGS = listOf(30, 31, 32, 33, 34, 35, 36, 37)
 val BLUE_HIVE_TAGS = listOf(38, 39, 40, 41, 42, 43, 44, 45)
 
+// Official BIOBUZZ hive AprilTag CLUSTERS (SDK 12.0 game tag library).
+// Each hive is a 4-tag CLUSTER whose origin is the CENTER OF THE CELL OPENING —
+// so the cluster pose IS the scoring aim point. Match by shortName because the
+// cluster member-ID accessors are not public in the SDK.
+//   RED SCORING: tags 30-33    RED AUDIENCE: tags 34-37
+//   BLUE AUDIENCE: tags 38-41  BLUE SCORING: tags 42-45
+const val HIVE_CLUSTER_RED_SCORING_NAME = "RED SCORING"
+const val HIVE_CLUSTER_RED_AUDIENCE_NAME = "RED AUDIENCE"
+const val HIVE_CLUSTER_BLUE_AUDIENCE_NAME = "BLUE AUDIENCE"
+const val HIVE_CLUSTER_BLUE_SCORING_NAME = "BLUE SCORING"
+val HIVE_CLUSTER_NAMES = setOf(
+    HIVE_CLUSTER_RED_SCORING_NAME,
+    HIVE_CLUSTER_RED_AUDIENCE_NAME,
+    HIVE_CLUSTER_BLUE_AUDIENCE_NAME,
+    HIVE_CLUSTER_BLUE_SCORING_NAME,
+)
+
 // HSV Ranges for BIOBUZZ
 val POLLEN_HSV_RANGE = ColorRange(
     ColorSpace.HSV,
