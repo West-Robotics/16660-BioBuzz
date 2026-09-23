@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
 import com.qualcomm.robotcore.hardware.Servo
+import com.qualcomm.robotcore.hardware.Gamepad
 
 val drivetrain = Drivetrain()
 val teleOp = CustomTeleOp(drivetrain)
@@ -42,4 +43,20 @@ class Experiment : LinearOpMode() {
 
 
 
+
+}
+/**
+ * Minimal gamepad-to-drivetrain adapter used by the [Experiment] OpMode
+ * (merged here from the old TeleOP.kt — it belongs with the robot singletons).
+ */
+class CustomTeleOp(
+    private val drivetrain: Drivetrain
+) {
+    fun refresh(gamepad: Gamepad) {
+        val forward = -gamepad.left_stick_y.toDouble()
+        val strafe = gamepad.left_stick_x.toDouble()
+        val turn = gamepad.right_stick_x.toDouble()
+
+        drivetrain.driveTeleOp(forward, strafe, turn)
+    }
 }

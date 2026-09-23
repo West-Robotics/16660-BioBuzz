@@ -113,3 +113,43 @@ class CalibrationProcessor : VisionProcessor {
         }
     }
 }
+/**
+ * Draws the live calibration numbers directly on that camera's preview
+ * (top-left corner) so the value is readable ON the Driver Station image,
+ * next to the outlined tag.
+ */
+class CalibrationOverlay : VisionProcessor {
+
+    @Volatile
+    var text: String = ""
+
+    private var paint: Paint? = null
+
+    override fun init(width: Int, height: Int, calibration: CameraCalibration?) {}
+
+    override fun processFrame(frame: Mat?, captureTimeNanos: Long): Any? = text
+
+    override fun onDrawFrame(
+        canvas: Canvas?,
+        onscreenWidth: Int,
+        onscreenHeight: Int,
+        scaleBmpPxToCanvasPx: Float,
+        scaleCanvasDensity: Float,
+        userContext: Any?,
+    ) {
+        val c = canvas ?: return
+        val s = userContext as? String ?: return
+        val p = paint ?: Paint().apply {
+            color = Color.YELLOW
+            textSize = 28f
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            setShadowLayer(3f, 1f, 1f, Color.BLACK)
+        }.also { paint = it }
+        var y = 40f
+        for (line in s.split('\n')) {
+            c.drawText(line, 12f, y, p)
+            y += p.textSize + 6f
+        }
+    }
+}
