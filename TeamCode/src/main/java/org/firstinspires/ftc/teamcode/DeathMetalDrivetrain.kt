@@ -6,12 +6,17 @@ import com.qualcomm.robotcore.hardware.DcMotorEx
 import com.qualcomm.robotcore.hardware.DcMotorSimple
 import kotlin.math.abs
 import kotlin.math.max
-@Suppress("unused")
-@TeleOp(name = "DMDrivetrain", group = "LinearOpMode")
-    class DMDrivetrain : LinearOpMode() {
+
+@TeleOp(name = "DMDrivetrain")
+class DeathMetalDrivetrain : LinearOpMode() {
 
     override fun runOpMode() {
-            val intake = hardwareMap.get("intake") as DcMotorEx
+
+        val spinner = DeathMetal(hardwareMap)
+
+        spinner.init()
+
+        val intake = hardwareMap.get("intake") as DcMotorEx
 
             intake.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
             intake.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.FLOAT
@@ -30,35 +35,38 @@ import kotlin.math.max
             val backRight = hardwareMap.get("backRight") as DcMotorEx
 
 
+
             frontLeft.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
             frontLeft.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
             frontRight.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
             frontRight.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
             backLeft.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
-            backLeft.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.FLOAT
+            backLeft.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
             backRight.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
-            backRight.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.FLOAT
-            intake.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
-            intake.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.FLOAT
+            backRight.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
+
 
             frontLeft.direction = DcMotorSimple.Direction.FORWARD
-            frontRight.direction = DcMotorSimple.Direction.FORWARD
-            backLeft.direction = DcMotorSimple.Direction.REVERSE
+            frontRight.direction = DcMotorSimple.Direction.REVERSE
+            backLeft.direction = DcMotorSimple.Direction.FORWARD
             backRight.direction = DcMotorSimple.Direction.REVERSE
-            intake.direction = DcMotorSimple.Direction.FORWARD
+
 
 
             waitForStart()
             while (opModeIsActive()) {
                 val x = gamepad1.left_stick_x
-                val y = gamepad1.left_stick_y
-                val bx = (gamepad1.right_trigger - gamepad1.right_trigger)
+                val y = -gamepad1.left_stick_y
+                val bx = (gamepad1.right_trigger - gamepad1.left_trigger)
 
                 val denominator = max((abs(x) + abs(y) + abs(bx)).toDouble(), 1.0)
                 frontLeft.power = (y + x + bx) / denominator
                 backLeft.power = (y - x + bx) / denominator
                 frontRight.power = (y - x - bx) / denominator
                 backRight.power = (y + x - bx) / denominator
+
+                spinner.spin(spin = -gamepad1.right_stick_y.toDouble())
+
 
                 if (gamepad1.rightBumperWasPressed()) {
                     intaketoggle(intake)
