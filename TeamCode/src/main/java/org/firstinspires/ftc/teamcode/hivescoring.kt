@@ -113,12 +113,19 @@ data class HiveTarget(
  */
 class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
 
-    private val hiveIds = (RED_HIVE_TAGS + BLUE_HIVE_TAGS).toHashSet()
-
     private val upIntrinsics = VisionConfig.calibrationFor(CameraId.UP).intrinsics
 
-    /** Latest hive target (best visible cluster, else best single tag), or null. */
+    /**
+     * Latest hive target for the SELECTED ALLIANCE ([SELECTED_TEAM], picked
+     * during INIT in both match OpModes) — best visible own-hive cluster, else
+     * best own single tag, or null. Opposing hive tags/clusters are ignored, so
+     * the robot can never line up on (or fire into) the wrong hive.
+     */
     fun update(): HiveTarget? {
+        val team = SELECTED_TEAM
+        val ourClusters = teamClusterNames(team)
+        val ourIds = teamTagIds(team).toHashSet()
+
         // The detections list is owned by the vision thread — snapshot defensively.
         val tags = try {
             aprilTagProcessor.detections.toList()
@@ -134,14 +141,14 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
         for (tag in tags) {
             when (tag) {
                 is AprilTagClusterDetection -> {
-                    if (tag.metadata?.shortName !in HIVE_CLUSTER_NAMES) continue
+                    if (tag.metadata?.shortName !in ourClusters) continue
                     val target = clusterToTarget(tag) ?: continue
                     if (bestCluster == null ||
                         target.percentClusterFound > bestCluster.percentClusterFound
                     ) bestCluster = target
                 }
                 is AprilTagSingleDetection -> {
-                    if (tag.id !in hiveIds) continue
+                    if (tag.id !in ourIds) continue
                     val target = toTarget(tag) ?: continue
                     if (bestSingle == null ||
                         target.pixelDiagonal > bestSingle.pixelDiagonal
@@ -266,6 +273,7 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
     fun addTelemetry(t: Telemetry, target: HiveTarget?) {
         val cfg = HiveScoringConfig
         val zone = zoneOf(target)
+        t.addData("TEAM", SELECTED_TEAM.name)
         t.addData(
             "HIVE window",
             "${cfg.SHOOT_MIN_RANGE_CM.toInt()}-${cfg.SHOOT_MAX_RANGE_CM.toInt()} cm, " +
@@ -325,10 +333,13 @@ class BallLocator {
     private val pollen = source(POLLEN_HSV_RANGE, "Pollen", POLLEN_PHYSICAL_WIDTH_MM, isBall = true)
     private val nectarBlue = source(NECTAR_BLUE_HSV_RANGE, "Nectar Blue", NECTAR_PHYSICAL_WIDTH_MM, isBall = true)
     private val nectarRed = source(NECTAR_RED_HSV_RANGE, "Nectar Red", NECTAR_PHYSICAL_WIDTH_MM, isBall = true)
+    // Second half of the wrapping red hue band (H 168-180) — same label so it
+    // is indistinguishable from the primary red source downstream.
+    private val nectarRedWrap = source(NECTAR_RED_WRAP_HSV_RANGE, "Nectar Red", NECTAR_PHYSICAL_WIDTH_MM, isBall = true)
     private val flower = source(FLOWER_GREEN_HSV_RANGE, "Flower", FLOWER_PHYSICAL_WIDTH_MM, isBall = false)
 
     /** Add these to the FRONT camera portal. */
-    val processors = listOf(pollen.proc, nectarBlue.proc, nectarRed.proc, flower.proc)
+    val processors = listOf(pollen.proc, nectarBlue.proc, nectarRed.proc, nectarRedWrap.proc, flower.proc)
 
     private fun source(
         range: org.firstinspires.ftc.vision.opencv.ColorRange,

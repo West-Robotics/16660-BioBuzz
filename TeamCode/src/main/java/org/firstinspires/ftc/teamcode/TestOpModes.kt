@@ -32,7 +32,7 @@ import kotlin.math.sqrt
 @TeleOp(name = "Vision Test OpMode", group = "Test")
 class VisionTestOpMode : LinearOpMode() {
 
-    private enum class Target { POLLEN, NECTAR_BLUE, NECTAR_RED, FLOWER }
+    private enum class Target { POLLEN, NECTAR_BLUE, NECTAR_RED, NECTAR_RED_WRAP, FLOWER }
     private var currentTarget = Target.POLLEN
     
     private var hMin = 0.0
@@ -100,6 +100,7 @@ class VisionTestOpMode : LinearOpMode() {
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.pollenLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.nectarBlueLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.nectarRedLocator, !calibrationEnabled)
+                visionSystem.groundPortal.setProcessorEnabled(visionSystem.nectarRedWrapLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.flowerLocator, !calibrationEnabled)
                 sleep(200)
             }
@@ -140,16 +141,19 @@ class VisionTestOpMode : LinearOpMode() {
         // Since ColorRange.min/max are protected, we use the known defaults from globals.kt
         when(target) {
             Target.POLLEN -> {
-                hMin = 10.0; hMax = 40.0; sMin = 100.0; sMax = 255.0; vMin = 100.0; vMax = 255.0
+                hMin = 14.0; hMax = 35.0; sMin = 100.0; sMax = 255.0; vMin = 100.0; vMax = 255.0
             }
             Target.NECTAR_BLUE -> {
                 hMin = 100.0; hMax = 140.0; sMin = 100.0; sMax = 255.0; vMin = 100.0; vMax = 255.0
             }
             Target.NECTAR_RED -> {
-                hMin = 0.0; hMax = 10.0; sMin = 100.0; sMax = 255.0; vMin = 100.0; vMax = 255.0
+                hMin = 0.0; hMax = 12.0; sMin = 100.0; sMax = 255.0; vMin = 100.0; vMax = 255.0
+            }
+            Target.NECTAR_RED_WRAP -> {
+                hMin = 168.0; hMax = 180.0; sMin = 100.0; sMax = 255.0; vMin = 100.0; vMax = 255.0
             }
             Target.FLOWER -> {
-                hMin = 40.0; hMax = 80.0; sMin = 50.0; sMax = 255.0; vMin = 50.0; vMax = 255.0
+                hMin = 45.0; hMax = 80.0; sMin = 50.0; sMax = 255.0; vMin = 50.0; vMax = 255.0
             }
         }
     }

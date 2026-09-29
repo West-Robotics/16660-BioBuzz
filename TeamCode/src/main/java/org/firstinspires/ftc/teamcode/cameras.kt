@@ -32,6 +32,7 @@ class VisionSystem(hardwareMap: HardwareMap) {
     val pollenLocator = createLocator(POLLEN_HSV_RANGE)
     val nectarBlueLocator = createLocator(NECTAR_BLUE_HSV_RANGE)
     val nectarRedLocator = createLocator(NECTAR_RED_HSV_RANGE)
+    val nectarRedWrapLocator = createLocator(NECTAR_RED_WRAP_HSV_RANGE)
     val flowerLocator = createLocator(FLOWER_GREEN_HSV_RANGE)
 
     /**
@@ -72,7 +73,7 @@ class VisionSystem(hardwareMap: HardwareMap) {
         .setCamera(groundCam)
         .setCameraResolution(Size(GROUND_CAM_WIDTH, GROUND_CAM_HEIGHT))
         .setLiveViewContainerId(portalViewIds[1])
-        .addProcessors(pollenLocator, nectarBlueLocator, nectarRedLocator, flowerLocator, groundMetadataOverlay, calibrationProcessor)
+        .addProcessors(pollenLocator, nectarBlueLocator, nectarRedLocator, nectarRedWrapLocator, flowerLocator, groundMetadataOverlay, calibrationProcessor)
         .build()
 
     init {
@@ -118,7 +119,8 @@ class VisionSystem(hardwareMap: HardwareMap) {
         for (tag in tags) {
             when (tag) {
                 is AprilTagClusterDetection -> {
-                    if (tag.metadata?.shortName !in HIVE_CLUSTER_NAMES) continue
+                    // Only OUR alliance's hives count (SELECTED_TEAM, globals.kt).
+                    if (tag.metadata?.shortName !in teamClusterNames(SELECTED_TEAM)) continue
                     val ftc = tag.ftcPose ?: continue
                     highDetections.add(
                         Detection(
@@ -134,6 +136,8 @@ class VisionSystem(hardwareMap: HardwareMap) {
                 }
                 is AprilTagSingleDetection -> {
                     if (tag.metadata == null) continue
+                    // Only OUR alliance's hives count (SELECTED_TEAM, globals.kt).
+                    if (tag.id !in teamTagIds(SELECTED_TEAM)) continue
                     highDetections.add(
                         Detection(
                             label = "Hive Tag ${tag.id}",
@@ -155,6 +159,7 @@ class VisionSystem(hardwareMap: HardwareMap) {
         addBlobDetections(groundDetections, pollenLocator.blobs, "Pollen", POLLEN_PHYSICAL_WIDTH_MM)
         addBlobDetections(groundDetections, nectarBlueLocator.blobs, "Nectar Blue", NECTAR_PHYSICAL_WIDTH_MM)
         addBlobDetections(groundDetections, nectarRedLocator.blobs, "Nectar Red", NECTAR_PHYSICAL_WIDTH_MM)
+        addBlobDetections(groundDetections, nectarRedWrapLocator.blobs, "Nectar Red", NECTAR_PHYSICAL_WIDTH_MM)
         addBlobDetections(groundDetections, flowerLocator.blobs, "Flower", FLOWER_PHYSICAL_WIDTH_MM)
 
         // 3. Process Robots (Ground Portal)

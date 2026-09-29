@@ -37,6 +37,9 @@ object AutoPlan {
  *
  * Prereqs on the real robot: RR tuning (MecanumDrive.PARAMS), "imu" configured,
  * vision test procedure passed, [HiveScoringConfig] measured.
+ *
+ * ALLIANCE: pick RED or BLUE on the gamepad during INIT (D-pad LEFT/RIGHT);
+ * only the selected alliance's hive tags are ever targeted (SELECTED_TEAM).
  */
 @Autonomous(name = "BioBuzz Autonomous", group = "Auto")
 class BioBuzzAutonomous : LinearOpMode() {
@@ -74,20 +77,28 @@ class BioBuzzAutonomous : LinearOpMode() {
 
         vision.attachTo(drive, enableCorrections = VisionTuning.FUSION_ENABLED_DEFAULT)
 
-        telemetry.addLine("BioBuzz autonomous: RR + hybrid vision + AprilTag scoring")
-        telemetry.addData(
-            "Vision corrections",
-            if (drive.visionCorrectionEnabled) "ENABLED" else "disabled (pass vision tests first)",
-        )
-        telemetry.addData(
-            "Shoot window",
-            "${HiveScoringConfig.SHOOT_MIN_RANGE_CM.toInt()}-" +
-                "${HiveScoringConfig.SHOOT_MAX_RANGE_CM.toInt()} cm, " +
-                "|angle| <= ${HiveScoringConfig.SHOOT_MAX_BEARING_DEG.toInt()} deg",
-        )
-        telemetry.update()
+        // ---- INIT: pick your alliance before the match starts ----
+        // D-pad LEFT = RED, D-pad RIGHT = BLUE. HiveScoring only ever targets
+        // the selected alliance's hives, so this must match the match sheet.
+        while (!isStarted && !isStopRequested) {
+            if (gamepad1.dpad_left) SELECTED_TEAM = TeamColor.RED
+            else if (gamepad1.dpad_right) SELECTED_TEAM = TeamColor.BLUE
 
-        waitForStart()
+            telemetry.addLine("BioBuzz autonomous: RR + hybrid vision + AprilTag scoring")
+            telemetry.addData(
+                "Vision corrections",
+                if (drive.visionCorrectionEnabled) "ENABLED" else "disabled (pass vision tests first)",
+            )
+            telemetry.addData(
+                "Shoot window",
+                "${HiveScoringConfig.SHOOT_MIN_RANGE_CM.toInt()}-" +
+                    "${HiveScoringConfig.SHOOT_MAX_RANGE_CM.toInt()} cm, " +
+                    "|angle| <= ${HiveScoringConfig.SHOOT_MAX_BEARING_DEG.toInt()} deg",
+            )
+            telemetry.addData("ALLIANCE", SELECTED_TEAM.name)
+            telemetry.addLine("Select with D-pad: LEFT = RED, RIGHT = BLUE")
+            telemetry.update()
+        }
 
         try {
             // ---- PHASE 1: COLLECT (vision-directed, capacity-aware) ----

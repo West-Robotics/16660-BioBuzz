@@ -12,10 +12,10 @@ val controller: Gamepad = gamepad1
 
 var DEBUG_MODE = true
 
-const val DrivetrainFrontLeft = "0"
-const val DrivetrainFrontRight = "2"
-const val DrivetrainBackLeft = "1"
-const val DrivetrainBackRight = "3"
+const val DrivetrainFrontLeft = "frontleft"
+const val DrivetrainFrontRight = "frontright"
+const val DrivetrainBackLeft = "backleft"
+const val DrivetrainBackRight = "backright"
 
 const val FlywheelMotor = "flywheel"
 const val IntakeMotor = "intake"
@@ -27,7 +27,7 @@ const val ticksPerMotorRev = 537.7
 const val WheelBaseCm: Double = 87.0
 const val TrackWidthCm: Double = 87.0
 
-const val maxRPM = 2500 // this is for the mootr before gear ratio is applied
+const val maxRPM = 2500 // this is for the motor before gear ratio is applied
 
 // Strategic/Pathfinding Constants (BIOBUZZ)
 const val NECTAR_SCORE_MULTIPLIER = 2.0 // Nectar is worth more points than Pollen
@@ -148,25 +148,63 @@ val HIVE_CLUSTER_NAMES = setOf(
     HIVE_CLUSTER_BLUE_SCORING_NAME,
 )
 
-// HSV Ranges for BIOBUZZ
+// ================== TEAM (ALLIANCE) SELECTION ==================
+/**
+ * Which alliance we are playing on. Both match OpModes let the drivers pick
+ * this live during INIT (D-pad LEFT = RED, D-pad RIGHT = BLUE); the value
+ * below is only the fallback when nobody touches the gamepad.
+ *
+ * Everything that targets hives (HiveScoring, VisionSystem) filters AprilTags
+ * through teamTagIds() / teamClusterNames(), so the robot can never align on
+ * or fire into the opposing alliance's hive.
+ */
+enum class TeamColor { RED, BLUE }
+
+var SELECTED_TEAM: TeamColor = TeamColor.RED
+
+/** AprilTag IDs of ONE alliance's hives (single-tag fallback path). */
+fun teamTagIds(team: TeamColor): List<Int> = when (team) {
+    TeamColor.RED -> RED_HIVE_TAGS
+    TeamColor.BLUE -> BLUE_HIVE_TAGS
+}
+
+/** SDK 12.0 hive-cluster short-names of ONE alliance's hives (both sides). */
+fun teamClusterNames(team: TeamColor): Set<String> = when (team) {
+    TeamColor.RED -> setOf(HIVE_CLUSTER_RED_SCORING_NAME, HIVE_CLUSTER_RED_AUDIENCE_NAME)
+    TeamColor.BLUE -> setOf(HIVE_CLUSTER_BLUE_SCORING_NAME, HIVE_CLUSTER_BLUE_AUDIENCE_NAME)
+}
+
+// HSV Ranges for BIOBUZZ (OpenCV hue H runs 0-180).
+// The bands are separated by DEAD BANDS so venue lighting can't bleed one
+// game piece into another:  red 0-12  |  pollen 14-35  |  flower 45-80.
+// Re-tune on-site with the "Vision Test OpMode" if detections misfire.
 val POLLEN_HSV_RANGE = ColorRange(
     ColorSpace.HSV,
-    Scalar(10.0, 100.0, 100.0),
-    Scalar(40.0, 255.0, 255.0)
+    Scalar(14.0, 100.0, 100.0),
+    Scalar(35.0, 255.0, 255.0)
 )
 val NECTAR_BLUE_HSV_RANGE = ColorRange(
     ColorSpace.HSV,
     Scalar(100.0, 100.0, 100.0),
     Scalar(140.0, 255.0, 255.0)
 )
+// OpenCV hue wraps at 180, so true red sits near BOTH H=0 and H=180.
+// ColorRange cannot express a wrapping band, so red nectar needs a second
+// range + processor with the SAME "Nectar Red" label (see BallLocator /
+// VisionSystem) — downstream scoring/priority logic is unchanged.
 val NECTAR_RED_HSV_RANGE = ColorRange(
     ColorSpace.HSV,
     Scalar(0.0, 100.0, 100.0),
-    Scalar(10.0, 255.0, 255.0)
+    Scalar(12.0, 255.0, 255.0)
+)
+val NECTAR_RED_WRAP_HSV_RANGE = ColorRange(
+    ColorSpace.HSV,
+    Scalar(168.0, 100.0, 100.0),
+    Scalar(180.0, 255.0, 255.0)
 )
 val FLOWER_GREEN_HSV_RANGE = ColorRange(
     ColorSpace.HSV,
-    Scalar(40.0, 50.0, 50.0),
+    Scalar(45.0, 50.0, 50.0),
     Scalar(80.0, 255.0, 255.0)
 )
 // Robots: large dark shapes (black plastic, shadows). Loose V/S bounds catch most lighting.

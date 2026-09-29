@@ -47,10 +47,18 @@ class BioBuzzTeleOp : LinearOpMode() {
         val hive = HiveScoring(aprilTagProcessor)
         val cfg = HiveScoringConfig
 
-        telemetry.addLine("BioBuzz TeleOp: LB=capture assist  RB=shoot assist")
-        telemetry.update()
+        // ---- INIT: pick your alliance before the match starts ----
+        // D-pad LEFT = RED, D-pad RIGHT = BLUE. HiveScoring only ever targets
+        // the selected alliance's hives, so this must match the match sheet.
+        while (!isStarted && !isStopRequested) {
+            if (gamepad1.dpad_left) SELECTED_TEAM = TeamColor.RED
+            else if (gamepad1.dpad_right) SELECTED_TEAM = TeamColor.BLUE
 
-        waitForStart()
+            telemetry.addLine("BioBuzz TeleOp: LB=capture assist  RB=shoot assist")
+            telemetry.addData("ALLIANCE", SELECTED_TEAM.name)
+            telemetry.addLine("Select with D-pad: LEFT = RED, RIGHT = BLUE")
+            telemetry.update()
+        }
 
         while (opModeIsActive()) {
             // ---- driver input ----
