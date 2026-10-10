@@ -105,3 +105,38 @@ idle the flywheel stays primed at `FLYWHEEL_PRIME_RPM` so spin-up is quick.
 - `--lost-frames` (default 25): how long the ball can vanish before a track
   ends; raise for low frame-rate videos.
 - `--min-area` (default 80 px²): noise floor for the ball blob.
+
+## 3. `blackbox_builder.py` — turn recorded matches into datasets
+
+Every OpMode on the `feature/superhuman-autonomy` branch records a full-match
+Black Box session to the Robot Controller's storage (passive, onboard-only —
+see `docs/LEGALITY-REVIEW.md`): state lines (pose, vision, planner decisions,
+flywheel RPMs, battery, gamepad inputs), events, and subsampled JPEG frames
+from BOTH robot cameras.
+
+**Pull the data off the phone** over USB (MTP) from:
+`Android/data/org.firstinspires.ftc.robotcontroller/files/blackbox/<label>_<ts>/`
+
+**Build the dataset** (pure standard library — no installs):
+
+```bash
+python3 blackbox_builder.py ../blackbox/teleop_1760000000000
+python3 blackbox_builder.py SESSION_DIR --out my_match --copy-frames
+```
+
+Outputs `state.csv`, `events.csv`, `frames.csv`, `report.txt` (duration,
+distance traveled, battery curve, flywheel peaks, planner decision histogram,
+event timeline) and, with `--copy-frames`, sequential `UP_000000.jpg` /
+`FRONT_000000.jpg` images synced to the log timestamps.
+
+The shadow-mode planner records what the AI **would** have done each second
+while the human drove — compare its decision histogram in `report.txt` against
+what actually happened to quantify "is the AI better than us yet?"
+
+## 4. Legality
+
+Before using the Black Box frame capture or the SelfPlay OpMode in an
+official match, read `docs/LEGALITY-REVIEW.md` (rule-by-rule analysis +
+verification checklist). Kill switches: `BLACKBOX_ENABLED` and
+`SHADOW_PLANNER_ENABLED` in `globals.kt`.
+

@@ -352,8 +352,22 @@ class BallLocator {
     private val nectarRedWrap = source(NECTAR_RED_WRAP_HSV_RANGE, "Nectar Red", NECTAR_PHYSICAL_WIDTH_MM, isBall = true)
     private val flower = source(FLOWER_GREEN_HSV_RANGE, "Flower", FLOWER_PHYSICAL_WIDTH_MM, isBall = false)
 
+    /**
+     * Opponent robots: large dark blobs (same idea as VisionSystem's
+     * robotDetector) — feeds the WorldModel's opponent tracking so the
+     * StrategicPlanner can discount balls they'll reach first.
+     */
+    private val robotDetector = ColorBlobLocatorProcessor.Builder()
+        .setTargetColorRange(ROBOT_DARK_HSV_RANGE)
+        .setContourMode(ColorBlobLocatorProcessor.ContourMode.EXTERNAL_ONLY)
+        .setDrawContours(false)
+        .build()
+
     /** Add these to the FRONT camera portal. */
-    val processors = listOf(pollen.proc, nectarBlue.proc, nectarRed.proc, nectarRedWrap.proc, flower.proc)
+    val processors = listOf(
+        pollen.proc, nectarBlue.proc, nectarRed.proc, nectarRedWrap.proc,
+        flower.proc, robotDetector,
+    )
 
     private fun source(
         range: org.firstinspires.ftc.vision.opencv.ColorRange,
@@ -410,6 +424,50 @@ class BallLocator {
     fun nearestFlower(): BallTarget? = visibleTargets()
         .filter { it.label == "Flower" }
         .minByOrNull { it.distanceCm }
+
+    /**
+     * Opponent robots visible to the FRONT camera (large dark blobs that pass
+     * the MIN_ROBOT_CONTOUR_AREA floor). Distance uses the same pinhole math
+     * with the known robot width.
+     */
+    fun visibleRobots(): List<BallTarget> {
+        val out = mutableListOf<BallTarget>()
+        val blobs = try {
+            robotDetector.blobs.toList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        for (blob in blobs) {
+            if (blob.contourArea.toDouble() < MIN_ROBOT_CONTOUR_AREA) continue
+            val box = blob.boxFit
+            val pixelWidth = max(box.size.width, box.size.height)
+            if (pixelWidth < 2.0) continue
+            out.add(
+                BallTarget(
+                    label = "Robot",
+                    distanceCm = C270_FOCAL_LENGTH_PIXELS * ROBOT_PHYSICAL_WIDTH_MM / pixelWidth / 10.0,
+                    bearingDeg = Math.toDegrees(
+                        atan2(box.center.x - GROUND_CAM_WIDTH / 2.0, C270_FOCAL_LENGTH_PIXELS),
+                    ),
+                    screenX = box.center.x,
+                    screenY = box.center.y,
+                    contourArea = blob.contourArea.toDouble(),
+                ),
+            )
+        }
+        return out
+    }
+
+    /**
+     * Everything the FRONT camera sees as [Sighting]s for the [WorldModel]:
+     * balls, flowers and opponent robots in one robot-relative list.
+     */
+    fun sightings(): List<Sighting> =
+        visibleTargets().map {
+            Sighting(it.label, it.distanceCm, it.bearingDeg, it.contourArea, isBall = it.label != "Flower")
+        } + visibleRobots().map {
+            Sighting("Robot", it.distanceCm, it.bearingDeg, it.contourArea, isBall = false)
+        }
 
     /** Point value of a target (globals.kt: POLLEN_VALUE / NECTAR_VALUE). */
     fun ballValueOf(t: BallTarget): Double = when (t.label) {

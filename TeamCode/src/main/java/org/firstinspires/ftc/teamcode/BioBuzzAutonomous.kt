@@ -8,6 +8,8 @@ import com.acmerobotics.roadrunner.Vector2d
 import com.pedropathing.ivy.behaviors.EndCondition
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
+import org.firstinspires.ftc.teamcode.blackbox.BlackBox
+import org.firstinspires.ftc.teamcode.blackbox.FrameGrabProcessor
 import org.firstinspires.ftc.teamcode.roadrunner.MecanumDrive
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.teamcode.vision.VisionTuning
@@ -52,6 +54,7 @@ class BioBuzzAutonomous : LinearOpMode() {
     private lateinit var ballLocator: BallLocator
     private lateinit var intake: Intake
     private lateinit var flywheel: FlyWheel
+    private val world = WorldModel()
 
     override fun runOpMode() {
         // ================= initialize =================
@@ -69,14 +72,15 @@ class BioBuzzAutonomous : LinearOpMode() {
 
         vision = VisionSubsystem(
             hardwareMap,
-            extraUpProcessors = listOf(aprilTagProcessor, tagOverlay),
-            extraFrontProcessors = ballLocator.processors,
+            extraUpProcessors = listOf(aprilTagProcessor, tagOverlay, FrameGrabProcessor("UP")),
+            extraFrontProcessors = ballLocator.processors + FrameGrabProcessor("FRONT"),
         )
         hive = HiveScoring(aprilTagProcessor)
         intake = Intake()
         flywheel = FlyWheel()
 
         vision.attachTo(drive, enableCorrections = VisionTuning.FUSION_ENABLED_DEFAULT)
+        BlackBox.start(hardwareMap.appContext, "auto")
 
         // ---- INIT: pick your alliance before the match starts ----
         // D-pad LEFT = RED, D-pad RIGHT = BLUE. HiveScoring only ever targets
@@ -105,17 +109,21 @@ class BioBuzzAutonomous : LinearOpMode() {
         try {
             // ---- PHASE 1: COLLECT (vision-directed, capacity-aware) ----
             telemetry.addLine("PHASE 1: vision-directed collection")
+            BlackBox.event("phase", "name" to "1-collect")
             val collected = collectBalls()
+            BlackBox.event("collect_done", "balls" to collected)
             telemetry.addData("PHASE 1 done", "$collected / $MAX_BALLS_HELD balls")
 
             // ---- PHASE 1b: FLOWER (optional, customizable pull-out) ----
             if (FLOWER_PULL_ENABLED && collected < MAX_BALLS_HELD) {
                 telemetry.addLine("PHASE 1b: flower pull")
+                BlackBox.event("phase", "name" to "1b-flower")
                 useFlowerIfVisible()
             }
 
             // ---- PHASE 2: POLISH (vision-guided pose alignment) ----
             telemetry.addLine("PHASE 2: vision-guidance polish")
+            BlackBox.event("phase", "name" to "2-polish")
             runGuidance()
 
             // ---- PHASE 3: ALIGN (AprilTag window; flywheel pre-spin) ----
@@ -123,6 +131,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             // calibrated curve), so the wheels are already at shooting speed
             // by the time alignment finishes; no tag yet = hold the prime speed.
             telemetry.addLine("PHASE 3: hive alignment")
+            BlackBox.event("phase", "name" to "3-align")
             flywheel.spinToRpm(
                 hive.update()?.let { ShooterModel.rpmForDistance(it.distanceCm) }
                     ?: FLYWHEEL_PRIME_RPM
@@ -130,9 +139,11 @@ class BioBuzzAutonomous : LinearOpMode() {
             val aligned = alignToHive()
 
             // ---- PHASE 4: FIRE (at the calibrated speed, feed until done) ----
+            BlackBox.event("phase", "name" to "4-fire")
             if (aligned) {
                 val rpm = hive.shootingRpmFor(hive.update())
                 flywheel.spinToRpm(rpm)
+                BlackBox.event("fire_start", "rpm" to rpm)
 
                 // Wait until BOTH wheels are actually at the commanded speed
                 // (the 6000 RPM motors spin up slowly) before feeding balls.
@@ -158,6 +169,7 @@ class BioBuzzAutonomous : LinearOpMode() {
                 intake.spinUp(1.0)
                 sleep(HiveScoringConfig.FIRE_TIME_MS.toLong())
                 intake.stop()
+                BlackBox.event("fire_done", "rpm" to rpm)
             } else {
                 telemetry.addData("PHASE 4", "ALIGN FAILED - skipping fire (safe)")
                 telemetry.update()
@@ -166,6 +178,7 @@ class BioBuzzAutonomous : LinearOpMode() {
 
             // ---- PHASE 5: PARK ----
             telemetry.addLine("PHASE 5: park")
+            BlackBox.event("phase", "name" to "5-park")
             runAction(
                 drive.actionBuilder(drive.pose)
                     .lineToXConstantHeading(drive.pose.position.x - AutoPlan.PARK_BACKOFF_IN)
@@ -177,6 +190,8 @@ class BioBuzzAutonomous : LinearOpMode() {
             intake.stop()
             flywheel.stop()
             vision.close()
+            BlackBox.event("auto_end")
+            BlackBox.stop()
         }
     }
 
@@ -381,9 +396,27 @@ class BioBuzzAutonomous : LinearOpMode() {
         hive.addTelemetry(telemetry, t)
 
         val p = drive.pose
+        val px = p.position.x * 2.54
+        val py = p.position.y * 2.54
+        val hdg = p.heading.toDouble()
+        val now = System.nanoTime()
+        world.update(ballLocator.sightings(), px, py, hdg, now)
+        world.updateHive(t, px, py, hdg, now)
+        BlackBox.log(
+            "record" to "auto",
+            "poseXcm" to px, "poseYcm" to py, "headingRad" to hdg,
+            "hiveCm" to t?.distanceCm, "hiveBearing" to t?.bearingDeg,
+            "flyL" to flywheel.measuredLeftRpm(),
+            "flyR" to flywheel.measuredRightRpm(),
+            "batteryV" to (try {
+                hardwareMap.voltageSensor.iterator().next().voltage
+            } catch (_: Exception) { 0.0 }),
+        )
+        world.logToBlackBox()
+
         telemetry.addData(
             "RR/FUSED pose",
-            "(%.2f, %.2f) %.1f deg".format(p.position.x, p.position.y, Math.toDegrees(p.heading.toDouble())),
+            "(%.2f, %.2f) %.1f deg".format(p.position.x, p.position.y, Math.toDegrees(hdg)),
         )
         vision.addTelemetry(telemetry)
         telemetry.update()

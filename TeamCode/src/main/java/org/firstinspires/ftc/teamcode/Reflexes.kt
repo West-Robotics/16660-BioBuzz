@@ -1,0 +1,125 @@
+package org.firstinspires.ftc.teamcode
+
+import com.qualcomm.robotcore.hardware.HardwareMap
+import com.qualcomm.robotcore.hardware.IMU
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit
+import org.firstinspires.ftc.teamcode.blackbox.BlackBox
+
+/**
+ * ============ REFLEXES — safety layer BELOW the planner ============
+ *
+ * These fire in milliseconds and don't ask the planner. A human notices a jam
+ * a second and a half late; the current sensor notices it immediately.
+ */
+
+/**
+ * Watches intake motor current while the intake is commanded to run. Real
+ * intake current is modest; a jam (ball wedged sideways, mechanism binding)
+ * spikes it. Response: short REVERSE pulse ("cough") to shake the jam loose,
+ * then retry. After INTAKE_MAX_COUGHS_PER_JAM coughs, declares JAMMED so the
+ * caller can skip that pickup and move on instead of burning the whole match
+ * on one stuck ball.
+ */
+class IntakeJamGuard(private val intake: Intake) {
+
+    enum class State { NORMAL, COUGHING, JAMMED }
+
+    var state = State.NORMAL
+        private set
+    private var jamSinceNanos = 0L
+    private var coughUntilNanos = 0L
+    private var coughsThisJam = 0
+
+    /**
+     * Call every loop. [spinning] = whether the OpMode WANTS the intake to run
+     * right now. The guard owns the intake motor while coughing.
+     */
+    fun update(spinning: Boolean): State {
+        val now = System.nanoTime()
+        val currentA = try {
+            intake.intakeMotor.current.magnitude
+        } catch (_: Exception) {
+            0.0
+        }
+
+        when (state) {
+            State.NORMAL -> {
+                if (!spinning) {
+                    jamSinceNanos = 0L
+                    coughsThisJam = 0
+                    intake.spinUp(1.0.takeIf { spinning } ?: 0.0)
+                    return State.NORMAL
+                }
+                intake.spinUp(1.0)
+                if (currentA >= INTAKE_JAM_CURRENT_A) {
+                    if (jamSinceNanos == 0L) jamSinceNanos = now
+                    if ((now - jamSinceNanos) / 1e6 >= INTAKE_JAM_SUSTAIN_MS) {
+                        coughsThisJam++
+                        BlackBox.event(
+                            "intake_jam_cough",
+                            "currentA" to currentA, "cough" to coughsThisJam,
+                        )
+                        if (coughsThisJam >= INTAKE_MAX_COUGHS_PER_JAM) {
+                            state = State.JAMMED
+                            intake.stop(breakMotor = true)
+                        } else {
+                            state = State.COUGHING
+                            coughUntilNanos = now + (INTAKE_COUGH_MS * 1e6).toLong()
+                            intake.spinUp(-0.6)
+                        }
+                    }
+                } else {
+                    jamSinceNanos = 0L
+                }
+            }
+            State.COUGHING -> {
+                if (now >= coughUntilNanos) {
+                    state = State.NORMAL
+                    jamSinceNanos = 0L
+                    intake.spinUp(1.0)
+                }
+                // else keep coughing (already reversed above)
+            }
+            State.JAMMED -> {
+                intake.stop(breakMotor = true)
+                if (!spinning) {
+                    // operator released the intake — reset for next attempt
+                    state = State.NORMAL
+                    jamSinceNanos = 0L
+                    coughsThisJam = 0
+                }
+            }
+        }
+        return state
+    }
+}
+
+/**
+ * Watches chassis tilt from the Control/Expansion Hub IMU. Beyond TILT_GUARD_DEG
+ * the robot is on its way over — the guard reports it and callers cut drive
+ * power instantly (a human can't react to a tilt fast enough to matter).
+ */
+class TiltGuard(hardwareMap: HardwareMap) {
+
+    private val imu: IMU? = try {
+        hardwareMap.get(IMU::class.java, RR_IMU_NAME)
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Current worst-case tilt angle, degrees (pitch or roll, whichever is bigger). */
+    fun tiltDeg(): Double {
+        val i = imu ?: return 0.0
+        return try {
+            val a = i.robotYawPitchRollAngles
+            kotlin.math.max(
+                kotlin.math.abs(a.getPitch(AngleUnit.DEGREES)),
+                kotlin.math.abs(a.getRoll(AngleUnit.DEGREES)),
+            )
+        } catch (_: Exception) {
+            0.0
+        }
+    }
+
+    fun isTipping(): Boolean = tiltDeg() > TILT_GUARD_DEG
+}

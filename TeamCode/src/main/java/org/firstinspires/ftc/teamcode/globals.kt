@@ -67,6 +67,42 @@ const val FLYWHEEL_SPEED_TOLERANCE_RPM = 150.0
 // How long the intake runs to feed one ball into the spinning flywheel.
 const val FLYWHEEL_FEED_TIME_MS = 1200.0
 
+// ================== BLACK BOX (passive full-match data recorder) ==================
+// Records EVERYTHING (state + both camera frame streams) to the Robot
+// Controller's storage for post-match analysis on a computer. Fully passive:
+// it never affects robot control, never transmits anything during a match,
+// and only uses the two already-legal USB webcams. See docs/LEGALITY-REVIEW.md
+// and blackbox/BlackBox.kt before using in official play.
+const val BLACKBOX_ENABLED = true          // master switch
+const val BLACKBOX_FRAME_CAPTURE_FPS = 5.0 // JPEG frames/sec saved PER camera
+const val BLACKBOX_MAX_SESSION_MB = 400.0   // storage budget per OpMode run
+const val BLACKBOX_STATE_LOG_HZ = 10.0     // state lines per second
+
+// ================== WORLD MODEL (persistent field memory) ==================
+const val WM_TRACK_MATCH_CM = 40.0     // max distance to re-associate a sighting with a track
+const val WM_BALL_MAX_AGE_SEC = 45.0    // how long an unseen ball stays remembered
+const val WM_ROBOT_MAX_AGE_SEC = 6.0    // opponents are assumed to have moved by then
+const val WM_CONFIDENCE_TAU_SEC = 10.0   // confidence decay time constant
+
+// ================== STRATEGIC PLANNER (lookahead brain) ==================
+const val MATCH_TELEOP_SECONDS = 120.0      // BioBuzz driver-controlled period
+const val PLANNER_COLLECT_HANDLE_SEC = 1.5  // intake time after reaching a ball
+const val PLANNER_SCORE_TOTAL_SEC = 7.0     // align + spin-up + fire + recover
+const val PLANNER_FLOWER_TOTAL_SEC = 10.0   // approach + pull + settle
+const val PLANNER_PARK_SEC = 2.0            // final park move
+const val PLANNER_OPPONENT_DISCOUNT = 0.5   // value multiplier when an opponent is closer
+const val PLANNER_ENDGAME_MARGIN_SEC = 8.0  // don't start anything that can't finish
+
+// ================== REFLEXES (below-the-planner safety) ==================
+const val INTAKE_JAM_CURRENT_A = 3.5      // amps above this (while spinning) = jam suspected
+const val INTAKE_JAM_SUSTAIN_MS = 300.0   // current must stay high this long
+const val INTAKE_COUGH_MS = 450.0         // reverse pulse to clear a jam
+const val INTAKE_MAX_COUGHS_PER_JAM = 3  // give up after this many reverse pulses
+const val TILT_GUARD_DEG = 28.0           // cut drive power beyond this pitch/roll
+
+// Shadow mode: the planner watches human teleop and logs what it WOULD do.
+const val SHADOW_PLANNER_ENABLED = true
+
 // Strategic/Pathfinding Constants (BIOBUZZ)
 const val NECTAR_SCORE_MULTIPLIER = 2.0 // Nectar is worth more points than Pollen
 const val ROBOT_SPEED_CM_PER_SEC = 100.0 // Placeholder: Measure actual robot speed
