@@ -113,7 +113,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
         hive = HiveScoring(aprilTagProcessor)
         intake = Intake()
         flywheel = FlyWheel()
-        loader = Loader()
+        loader = Loader().also { it.home() }
         jamGuard = IntakeJamGuard(intake)
         tiltGuard = TiltGuard(hardwareMap)
 

@@ -47,9 +47,9 @@ class Loader : Mechanism {
     val busy: Boolean
         get() = System.nanoTime() < motionEndNanos
 
-    init {
-        home()
-    }
+    // NOTE: no auto-home in init — top-level singletons (main.kt) can be
+    // constructed before the hardware map exists. OpModes call home() once
+    // inside runOpMode(), where hardware is guaranteed ready.
 
     /** Commands the servo to the home (gate closed) position. */
     fun home() {

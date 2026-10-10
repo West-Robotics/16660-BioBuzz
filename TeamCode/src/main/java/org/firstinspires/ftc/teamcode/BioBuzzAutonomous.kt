@@ -79,7 +79,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         hive = HiveScoring(aprilTagProcessor)
         intake = Intake()
         flywheel = FlyWheel()
-        loader = Loader()
+        loader = Loader().also { it.home() }
 
         vision.attachTo(drive, enableCorrections = VisionTuning.FUSION_ENABLED_DEFAULT)
         BlackBox.start(hardwareMap.appContext, "auto")

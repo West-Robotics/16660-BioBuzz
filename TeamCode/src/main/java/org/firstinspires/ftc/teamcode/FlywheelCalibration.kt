@@ -53,6 +53,7 @@ class FlywheelCalibration : LinearOpMode() {
 
     override fun runOpMode() {
         BlackBox.start(hardwareMap.appContext, "calib")
+        loader.home()
         while (!isStarted && !isStopRequested) {
             telemetry.addLine("FLYWHEEL CALIBRATION (${rpmSteps.size} RPM steps)")
             telemetry.addLine("DPAD UP/DOWN: pick RPM step   DPAD LEFT/RIGHT: fine +/-25")

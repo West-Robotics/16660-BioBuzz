@@ -42,7 +42,7 @@ class BioBuzzTeleOp : LinearOpMode() {
         val drivetrain = Drivetrain()
         val intake = Intake()
         val flywheel = FlyWheel()
-        val loader = Loader()
+        val loader = Loader().also { it.home() }
         val shotDetector = ShotDetector(flywheel)
 
         val aprilTagProcessor = AprilTagProcessor.Builder()
