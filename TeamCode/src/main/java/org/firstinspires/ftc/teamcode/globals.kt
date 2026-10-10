@@ -17,17 +17,55 @@ const val DrivetrainFrontRight = "frontright"
 const val DrivetrainBackLeft = "backleft"
 const val DrivetrainBackRight = "backright"
 
-const val FlywheelMotor = "flywheel"
+const val FlywheelLeftMotor = "flywheelleft"
+const val FlywheelRightMotor = "flywheelright"
 const val IntakeMotor = "intake"
 const val IntakeGearRatio = 1.0
 
 const val WheelDiameterCm = 5.0
 const val WheelGearRatio = 1.0
-const val ticksPerMotorRev = 537.7
 const val WheelBaseCm: Double = 87.0
 const val TrackWidthCm: Double = 87.0
 
-const val maxRPM = 2500 // this is for the motor before gear ratio is applied
+// ================== MOTOR SPECS (goBILDA 5203-series Yellow Jackets) ==================
+// Every motor below has a BUILT-IN quadrature encoder. The counts-per-rev (CPR)
+// is what the NextFTC anglePerCount conversion uses, so encoder-based velocity
+// and position control read TRUE wheel/motor speed. VERIFY each CPR against the
+// spec sheet that ships in the goBILDA box before trusting closed-loop tuning.
+
+// -- Drivetrain: 4x 117 RPM (5203-2402-0051), mecanum --
+const val DRIVE_MOTOR_MAX_RPM = 117.0
+const val DRIVE_MOTOR_ENCODER_CPR = 1440.9 // 28 CPR motor-shaft encoder x 51.46:1 gearbox
+
+// -- Flywheel: 2x 6000 RPM (5203-2402-0001), one per side of the ball --
+const val FLYWHEEL_MOTOR_MAX_RPM = 6000.0
+const val FLYWHEEL_MOTOR_ENCODER_CPR = 28.0 // 1:1 gearbox -> 28 CPR at output shaft
+
+// -- Intake: single motor (set to your real motor's spec) --
+const val INTAKE_MOTOR_MAX_RPM = 2500.0
+const val INTAKE_MOTOR_ENCODER_CPR = 28.0
+
+// ================== FLYWHEEL SHOOTER CALIBRATION (BIOBUZZ) ==================
+// Landing distance (cm) of the ball for each flywheel RPM. MEASURE with the
+// "Flywheel Calibration" OpMode + tools/flywheel_analyzer.py (see tools/README.md),
+// then paste the analyzer's numbers into SHOOTER_CALIBRATION_DISTANCE_CM below,
+// keeping the same order as SHOOTER_CALIBRATION_RPM (RPM descending).
+// Until real distances are filled in (> 0), the shooter falls back to full speed.
+val SHOOTER_CALIBRATION_RPM = doubleArrayOf(6000.0, 5000.0, 4000.0, 3000.0, 2000.0, 1000.0)
+var SHOOTER_CALIBRATION_DISTANCE_CM = doubleArrayOf(
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // FILL IN: measured landing distance per RPM (cm)
+)
+
+// -- Flywheel priming: the 6000 RPM motors are torque-starved (1.47 kg.cm), so
+// spin-up from a dead stop takes a while. Keep the wheels idling at PRIME_RPM
+// so reaching any shooting speed is nearly instant. Set PRIME_ENABLED false to
+// save battery / silence the wheels instead. --
+const val FLYWHEEL_PRIME_ENABLED = true
+const val FLYWHEEL_PRIME_RPM = 2000.0
+// Fire only when BOTH wheels are within this many RPM of the commanded speed.
+const val FLYWHEEL_SPEED_TOLERANCE_RPM = 150.0
+// How long the intake runs to feed one ball into the spinning flywheel.
+const val FLYWHEEL_FEED_TIME_MS = 1200.0
 
 // Strategic/Pathfinding Constants (BIOBUZZ)
 const val NECTAR_SCORE_MULTIPLIER = 2.0 // Nectar is worth more points than Pollen

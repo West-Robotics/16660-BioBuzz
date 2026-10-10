@@ -97,12 +97,14 @@ class StrategicController(private val vision: VisionSystem, private val drivetra
     }
 
     /**
-     * Placeholder hook for the flywheel mechanism.
-     * When the real flywheel mechanism exists, it should expose a `warmUp()` function.
+     * Preemptive flywheel spin-up. If we can see the hive, pre-spin to the RPM
+     * the calibrated curve says our current distance needs; otherwise hold
+     * the wheels at the PRIME speed so a later real spin-up is just a short
+     * hop. (The global `flywheel` singleton lives in main.kt.)
      */
     private fun requestFlywheelSpinup() {
-        // TODO: flywheel.warmUp() once the mechanism is built.
-        // For now, this is a no-op that reserves the integration point.
+        val dist = hivePosition?.let { hypot(it.first, it.second) }
+        flywheel.spinToRpm(dist?.let { ShooterModel.rpmForDistance(it) } ?: FLYWHEEL_PRIME_RPM)
     }
 
     /**
@@ -224,9 +226,14 @@ class StrategicController(private val vision: VisionSystem, private val drivetra
     }
 
     private fun performShot() {
-        // Flywheel firing control would go here.
-        // TODO: flywheel.fireBalls(ballCount()) once the mechanism is built.
-        // After shooting, reset counts.
+        // Command the calibrated shooting speed for our current hive distance
+        // (full speed if uncalibrated / hive lost). The match OpMode's fire
+        // sequence only feeds balls once BOTH wheels are at speed
+        // (FlyWheel.isAtSpeed) — this brain just picks the power level.
+        val dist = hivePosition?.let { hypot(it.first, it.second) }
+        flywheel.spinToRpm(dist?.let { ShooterModel.rpmForDistance(it) } ?: FLYWHEEL_MOTOR_MAX_RPM)
+
+        // After the shot, reset counts.
         resetBallCount()
         currentStrategy = Strategy.COLLECT_BALLS
     }

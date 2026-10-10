@@ -44,9 +44,14 @@ import kotlin.math.sqrt
  * the teleop alignment assist, so there is exactly one place to tune.
  */
 object HiveScoringConfig {
-    // -- The shooting range window (MEASURE with the real robot + flywheel) --
-    const val SHOOT_MIN_RANGE_CM = 90.0   // closer than this = TOO_CLOSE (no fire)
-    const val SHOOT_MAX_RANGE_CM = 140.0  // farther than this = TOO_FAR (drive in)
+    // -- The shooting range window --
+    // Shooting is DISTANCE-BASED now: once the RPM-vs-distance curve is
+    // calibrated (globals.kt SHOOTER_CALIBRATION_*), the max range comes from
+    // the curve itself (ShooterModel.effectiveMaxRangeCm()) so the robot can
+    // fire from anywhere it can physically reach. SHOOT_MAX_RANGE_CM is only
+    // the fallback until you calibrate. SHOOT_MIN stays a hard safety floor.
+    const val SHOOT_MIN_RANGE_CM = 60.0   // closer than this = TOO_CLOSE (no fire)
+    const val SHOOT_MAX_RANGE_CM = 140.0  // fallback only — the calibration curve overrides
     const val SHOOT_MAX_BEARING_DEG = 10.0 // must aim within this angle of the tag
 
     // -- Alignment controller gains (power per unit error) --
@@ -239,17 +244,26 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
         return best
     }
 
-    /** Classifies a target against the configured shooting window. */
+    /** Classifies a target against the shooting window (calibration-aware). */
     fun zoneOf(t: HiveTarget?): ScoringZone {
         if (t == null) return ScoringZone.NO_TAG
         val bearingOk = abs(t.bearingDeg) <= HiveScoringConfig.SHOOT_MAX_BEARING_DEG
         return when {
             t.distanceCm < HiveScoringConfig.SHOOT_MIN_RANGE_CM -> ScoringZone.TOO_CLOSE
-            t.distanceCm > HiveScoringConfig.SHOOT_MAX_RANGE_CM -> ScoringZone.TOO_FAR
+            t.distanceCm > ShooterModel.effectiveMaxRangeCm() -> ScoringZone.TOO_FAR
             !bearingOk -> ScoringZone.IN_RANGE // distance OK, still turning to aim
             else -> ScoringZone.ALIGNED
         }
     }
+
+    /**
+     * Flywheel RPM to land a ball on the target from wherever we stand: the
+     * calibrated curve ([ShooterModel]) evaluated at the LIVE tag distance.
+     * Uncalibrated curve or no target -> full speed (the old behavior).
+     */
+    fun shootingRpmFor(t: HiveTarget?): Double =
+        if (t == null) FLYWHEEL_MOTOR_MAX_RPM
+        else ShooterModel.rpmForDistance(t.distanceCm)
 
     /**
      * Bounded (forward, turn) powers steering toward the window center while
@@ -276,8 +290,8 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
         t.addData("TEAM", SELECTED_TEAM.name)
         t.addData(
             "HIVE window",
-            "${cfg.SHOOT_MIN_RANGE_CM.toInt()}-${cfg.SHOOT_MAX_RANGE_CM.toInt()} cm, " +
-                "|angle| <= ${cfg.SHOOT_MAX_BEARING_DEG.toInt()} deg",
+            "${cfg.SHOOT_MIN_RANGE_CM.toInt()}-${ShooterModel.effectiveMaxRangeCm().toInt()} cm " +
+                "(${ShooterModel.summary()}), |angle| <= ${cfg.SHOOT_MAX_BEARING_DEG.toInt()} deg",
         )
         if (target == null) {
             t.addData("HIVE tag", "none visible")
@@ -469,7 +483,7 @@ class TagInfoOverlay : VisionProcessor {
 
         val zone = when {
             t.distanceCm < HiveScoringConfig.SHOOT_MIN_RANGE_CM -> ScoringZone.TOO_CLOSE
-            t.distanceCm > HiveScoringConfig.SHOOT_MAX_RANGE_CM -> ScoringZone.TOO_FAR
+            t.distanceCm > ShooterModel.effectiveMaxRangeCm() -> ScoringZone.TOO_FAR
             abs(t.bearingDeg) > HiveScoringConfig.SHOOT_MAX_BEARING_DEG -> ScoringZone.IN_RANGE
             else -> ScoringZone.ALIGNED
         }

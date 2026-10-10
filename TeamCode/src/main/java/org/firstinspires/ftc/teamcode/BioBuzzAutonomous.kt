@@ -30,9 +30,10 @@ object AutoPlan {
  *   1. COLLECT: intake on, RR trajectory sweep through the collection area.
  *   2. POLISH:  vision-guidance command nudges the pose against stationary
  *              visual references (no-ops unless vision is confident).
- *   3. ALIGN:   search for the hive tag, servo into the [HiveScoringConfig]
- *              shooting window; flywheel pre-spins while approaching.
- *   4. FIRE:    flywheel already spinning — hold FIRE_TIME_MS to launch.
+ *   3. ALIGN:   search for the hive tag, servo into the shooting window;
+ *              flywheel pre-spins to the RPM the live distance needs.
+ *   4. FIRE:    spin to the calibrated RPM, wait until BOTH wheels are at
+ *              speed, then feed balls through for FIRE_TIME_MS.
  *   5. PARK:    back off from the hive and stop.
  *
  * Prereqs on the real robot: RR tuning (MecanumDrive.PARAMS), "imu" configured,
@@ -90,9 +91,10 @@ class BioBuzzAutonomous : LinearOpMode() {
                 if (drive.visionCorrectionEnabled) "ENABLED" else "disabled (pass vision tests first)",
             )
             telemetry.addData(
-                "Shoot window",
+                "Shoot range",
                 "${HiveScoringConfig.SHOOT_MIN_RANGE_CM.toInt()}-" +
-                    "${HiveScoringConfig.SHOOT_MAX_RANGE_CM.toInt()} cm, " +
+                    "${ShooterModel.effectiveMaxRangeCm().toInt()} cm " +
+                    "(${ShooterModel.summary()}), " +
                     "|angle| <= ${HiveScoringConfig.SHOOT_MAX_BEARING_DEG.toInt()} deg",
             )
             telemetry.addData("ALLIANCE", SELECTED_TEAM.name)
@@ -117,17 +119,48 @@ class BioBuzzAutonomous : LinearOpMode() {
             runGuidance()
 
             // ---- PHASE 3: ALIGN (AprilTag window; flywheel pre-spin) ----
+            // Pre-spin targets the RPM the CURRENT hive distance needs (the
+            // calibrated curve), so the wheels are already at shooting speed
+            // by the time alignment finishes; no tag yet = hold the prime speed.
             telemetry.addLine("PHASE 3: hive alignment")
-            flywheel.spinUp(1.0) // spin-up overlaps the approach
+            flywheel.spinToRpm(
+                hive.update()?.let { ShooterModel.rpmForDistance(it.distanceCm) }
+                    ?: FLYWHEEL_PRIME_RPM
+            )
             val aligned = alignToHive()
 
-            // ---- PHASE 4: FIRE ----
-            telemetry.addData(
-                "PHASE 4", if (aligned) "FIRING" else "ALIGN FAILED - skipping fire (safe)",
-            )
-            telemetry.update()
+            // ---- PHASE 4: FIRE (at the calibrated speed, feed until done) ----
             if (aligned) {
+                val rpm = hive.shootingRpmFor(hive.update())
+                flywheel.spinToRpm(rpm)
+
+                // Wait until BOTH wheels are actually at the commanded speed
+                // (the 6000 RPM motors spin up slowly) before feeding balls.
+                val spinDeadline = System.nanoTime() +
+                    (HiveScoringConfig.FIRE_TIME_MS * 1e6).toLong()
+                while (opModeIsActive() && !flywheel.isAtSpeed(rpm) &&
+                    System.nanoTime() < spinDeadline
+                ) {
+                    telemetry.addData("PHASE 4", "spinning up to %.0f RPM".format(rpm))
+                    telemetry.addData(
+                        "Measured L/R",
+                        "%.0f / %.0f RPM".format(
+                            flywheel.measuredLeftRpm(),
+                            flywheel.measuredRightRpm(),
+                        ),
+                    )
+                    telemetry.update()
+                }
+
+                // Feed every held ball through the at-speed flywheel.
+                telemetry.addData("PHASE 4", "FIRING at %.0f RPM".format(rpm))
+                telemetry.update()
+                intake.spinUp(1.0)
                 sleep(HiveScoringConfig.FIRE_TIME_MS.toLong())
+                intake.stop()
+            } else {
+                telemetry.addData("PHASE 4", "ALIGN FAILED - skipping fire (safe)")
+                telemetry.update()
             }
             flywheel.stop()
 

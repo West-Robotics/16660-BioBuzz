@@ -12,14 +12,19 @@ import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
  *
  *   LEFT STICK drive / RIGHT STICK turn            (existing Drivetrain)
  *   A (hold)  intake in          B (hold)  intake reverse
- *   RIGHT TRIGGER (hold)         flywheel full speed (manual fire)
+ *   RIGHT TRIGGER (hold)         flywheel spins to the RPM the current hive
+ *                                distance needs (manual fire; full speed when
+ *                                no tag is visible or the curve is uncalibrated)
  *   LEFT BUMPER (hold)           BALL CAPTURE ASSIST — strafes toward the
  *                                nearest pollen/nectar blob and creeps to a
  *                                CAPTURE_APPROACH_CM standoff.
  *   RIGHT BUMPER (hold)          SHOOTING ALIGN ASSIST — auto-turns toward the
  *                                hive AprilTag and holds the shooting window;
- *                                the flywheel auto-spins once ALIGNED so balls
- *                                launch the moment the window is hit.
+ *                                the flywheel spins to the calibrated RPM for
+ *                                the live distance and auto-feeds balls the
+ *                                moment BOTH wheels are at speed.
+ *   (idle)                       flywheel stays PRIMED at FLYWHEEL_PRIME_RPM
+ *                                (see globals.kt) so spin-up to a shot is quick.
  *
  * The DS preview shows the hive distance/angle live (TagInfoOverlay) and the
  * ball blobs; telemetry mirrors everything.
@@ -66,14 +71,7 @@ class BioBuzzTeleOp : LinearOpMode() {
             var strafe = gamepad1.left_stick_x.toDouble()
             var turn = gamepad1.right_stick_x.toDouble()
 
-            // ---- intake ----
-            when {
-                gamepad1.a -> intake.spinUp(1.0)
-                gamepad1.b -> intake.spinUp(-1.0)
-                else -> intake.stop()
-            }
-
-            // ---- latest hive measurement (used by assist + telemetry + overlay) ----
+            // ---- latest hive measurement (used by assist + flywheel + telemetry) ----
             val target = hive.update()
             tagOverlay.publish(target)
 
@@ -85,14 +83,28 @@ class BioBuzzTeleOp : LinearOpMode() {
                 turn = (turn + t).coerceIn(-1.0, 1.0)
             }
 
-            // Flywheel: manual full speed on trigger, or auto-fire while the
-            // align assist has the robot ALIGNED inside the shooting window.
+            // ---- flywheel: DISTANCE-BASED shooting ----
+            // The commanded speed comes from the calibrated RPM-vs-distance
+            // curve evaluated at the live hive distance (full speed when
+            // uncalibrated or no tag is visible). While idle the wheels stay
+            // PRIMED at FLYWHEEL_PRIME_RPM so spin-up to any shot is quick.
             val manualFire = gamepad1.right_trigger > 0.3
             val assistFire = alignAssist && hive.zoneOf(target) == ScoringZone.ALIGNED
-            if (manualFire || assistFire) {
-                flywheel.spinUp(1.0)
-            } else {
-                flywheel.stop()
+            val shootingRpm = hive.shootingRpmFor(target)
+            when {
+                manualFire || assistFire -> flywheel.spinToRpm(shootingRpm)
+                FLYWHEEL_PRIME_ENABLED -> flywheel.prime()
+                else -> flywheel.stop()
+            }
+            val readyToFire = flywheel.isAtSpeed(shootingRpm)
+
+            // ---- intake: manual, or auto-feed once BOTH wheels are at speed ----
+            // (Launching on slow wheels is a short shot, so the align assist
+            // only feeds balls after isAtSpeed passes.)
+            when {
+                gamepad1.a || (assistFire && readyToFire) -> intake.spinUp(1.0)
+                gamepad1.b -> intake.spinUp(-1.0)
+                else -> intake.stop()
             }
 
             // ---- BALL CAPTURE ASSIST (hold LEFT bumper) ----
@@ -113,6 +125,15 @@ class BioBuzzTeleOp : LinearOpMode() {
             vision.periodic()
 
             hive.addTelemetry(telemetry, target)
+            telemetry.addData(
+                "FLYWHEEL",
+                "cmd %.0f  L %.0f  R %.0f RPM  %s".format(
+                    shootingRpm,
+                    flywheel.measuredLeftRpm(),
+                    flywheel.measuredRightRpm(),
+                    if (readyToFire) "AT SPEED" else "spinning up",
+                ),
+            )
             val ball = ballLocator.nearestBall()
             if (ball != null) {
                 telemetry.addData(
