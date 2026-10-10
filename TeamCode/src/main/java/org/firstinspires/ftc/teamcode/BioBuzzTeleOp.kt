@@ -34,10 +34,16 @@ import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
 @TeleOp(name = "BioBuzz TeleOp", group = "TeleOp")
 class BioBuzzTeleOp : LinearOpMode() {
 
+    // loader fire cycle (advances one tick at a time in the main loop)
+    private enum class LoadState { IDLE, STROKING, WATCHING, RETRACTING }
+    private var loadState = LoadState.IDLE
+
     override fun runOpMode() {
         val drivetrain = Drivetrain()
         val intake = Intake()
         val flywheel = FlyWheel()
+        val loader = Loader()
+        val shotDetector = ShotDetector(flywheel)
 
         val aprilTagProcessor = AprilTagProcessor.Builder()
             .setDrawTagOutline(true)
@@ -116,13 +122,45 @@ class BioBuzzTeleOp : LinearOpMode() {
             }
             val readyToFire = flywheel.isAtSpeed(shootingRpm)
 
-            // ---- intake: manual, or auto-feed once BOTH wheels are at speed ----
-            // (Launching on slow wheels is a short shot, so the align assist
-            // only feeds balls after isAtSpeed passes.)
+            // ---- intake: manual only — the LOADER meters balls during fire ----
             when {
-                gamepad1.a || (assistFire && readyToFire) -> intake.spinUp(1.0)
+                gamepad1.a -> intake.spinUp(1.0)
                 gamepad1.b -> intake.spinUp(-1.0)
                 else -> intake.stop()
+            }
+
+            // ---- loader: hold X = fire balls one per stroke (manual fire);
+            // the align assist strokes automatically once BOTH wheels are at
+            // the commanded speed. Each stroke is confirmed by the RPM dip. ----
+            val wantStroke = (manualFire || assistFire) && (gamepad1.x || assistFire) &&
+                readyToFire && !loader.busy && loader.phase == LoaderPhase.HOME
+            if (wantStroke) {
+                loader.stroke()
+                loadState = LoadState.STROKING
+                BlackBox.event(
+                    "fire_start", "rpm" to shootingRpm,
+                    "source" to if (gamepad1.x) "manual" else "assist",
+                    "hiveCm" to target?.distanceCm,
+                )
+            }
+            when (loadState) {
+                LoadState.STROKING ->
+                    if (!loader.busy) {
+                        shotDetector.arm()
+                        loadState = LoadState.WATCHING
+                    }
+                LoadState.WATCHING ->
+                    when (shotDetector.update()) {
+                        ShotDetector.State.CONFIRMED, ShotDetector.State.MISSED ->
+                            if (loader.retract()) loadState = LoadState.RETRACTING
+                        else -> {}
+                    }
+                LoadState.RETRACTING ->
+                    if (!loader.busy && loader.phase == LoaderPhase.HOME) {
+                        shotDetector.idle()
+                        loadState = LoadState.IDLE
+                    }
+                LoadState.IDLE -> {}
             }
 
             // ---- BALL CAPTURE ASSIST (hold LEFT bumper) ----
@@ -172,10 +210,12 @@ class BioBuzzTeleOp : LinearOpMode() {
                         hardwareMap.voltageSensor.iterator().next().voltage
                     } catch (_: Exception) { 0.0 }),
                     "tiltDeg" to tiltGuard.tiltDeg(),
+                    "shots" to loader.strokeCount,
                 )
                 shadowWorld.logToBlackBox()
             }
             if (tiltGuard.isTipping()) telemetry.addLine("!! TILT WARNING — ease off !!")
+            telemetry.addData("LOADER", "%d strokes fired".format(loader.strokeCount))
 
             telemetry.addData(
                 "FLYWHEEL",

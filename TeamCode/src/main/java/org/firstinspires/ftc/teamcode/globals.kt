@@ -65,7 +65,27 @@ const val FLYWHEEL_PRIME_RPM = 2000.0
 // Fire only when BOTH wheels are within this many RPM of the commanded speed.
 const val FLYWHEEL_SPEED_TOLERANCE_RPM = 150.0
 // How long the intake runs to feed one ball into the spinning flywheel.
+// (Legacy: firing now uses the LOADER below — this stays for manual/other uses.)
 const val FLYWHEEL_FEED_TIME_MS = 1200.0
+
+// ================== BALL LOADER (indexer between hopper and flywheel) ==================
+// goBILDA dual-mode servo in POSITION mode, config name "loader". One full
+// stroke meters exactly ONE ball into the flywheel (~360 deg at the output).
+// Positions are normalized 0.0..1.0 (servo 0..300 deg through your gearing).
+// MEASURE all four values on the real robot before trusting them.
+const val LoaderServoName = "loader"
+const val LOADER_HOME_POSITION = 0.0      // servo position holding the gate closed
+const val LOADER_STROKE_END_POSITION = 1.0 // one ball enters the flywheel here
+const val LOADER_STROKE_MS = 800.0       // forward stroke duration incl. margin
+const val LOADER_RETRACT_MS = 600.0      // return-to-home duration incl. margin
+
+// ================== SHOT DETECTION (flywheel RPM-dip signature) ==================
+// REV hub SERVO ports report no current, so the loader servo can't be the
+// sensor — but the ball hitting the spinning wheels briefly loads them and the
+// flywheel ENCODERS see a dip. Dip right after a stroke = a ball went through.
+const val SHOT_DIP_THRESHOLD_RPM = 250.0  // dip below baseline that counts as a shot
+const val SHOT_DETECT_WINDOW_MS = 900.0    // how long after a stroke we watch
+const val SHOT_RECOVERY_TIMEOUT_MS = 2500.0 // wait for wheels to return to speed
 
 // ================== BLACK BOX (passive full-match data recorder) ==================
 // Records EVERYTHING (state + both camera frame streams) to the Robot

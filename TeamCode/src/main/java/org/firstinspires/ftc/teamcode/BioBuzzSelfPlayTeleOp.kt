@@ -50,7 +50,12 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
     // ---- match state ----
     private var ballsHeld = 0
     private var closeSinceNanos = 0L
-    private var feedUntilNanos = 0L
+
+    // loader fire cycle (behavior-based: advances one tick at a time)
+    private enum class FireState { IDLE, STROKING, WATCHING, RECOVERING }
+    private var fireState = FireState.IDLE
+    private lateinit var loader: Loader
+    private val shotDetector by lazy { ShotDetector(flywheel) }
     private var clockStartRuntime = -1.0
     private var lastDecision: PlannerDecision? = null
     private var lastLoggedDecision: PlannerDecision? = null
@@ -108,6 +113,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
         hive = HiveScoring(aprilTagProcessor)
         intake = Intake()
         flywheel = FlyWheel()
+        loader = Loader()
         jamGuard = IntakeJamGuard(intake)
         tiltGuard = TiltGuard(hardwareMap)
 
@@ -180,7 +186,8 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
                     drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), 0.0))
                     intake.stop()
                     flywheel.stop()
-                    feedUntilNanos = 0L
+                    shotDetector.idle()
+                    fireState = FireState.IDLE
                     BlackBox.log(
                         "record" to "guard", "deadman" to deadman, "tipping" to tipping,
                         "tiltDeg" to (tiltGuard?.tiltDeg() ?: 0.0),
@@ -280,9 +287,16 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
                     val (f, turn) = hive.rangeCorrection(t)
                     drive.setDrivePowers(PoseVelocity2d(Vector2d(f, 0.0), turn))
                     val aligned = hive.zoneOf(t) == ScoringZone.ALIGNED
-                    if (aligned && flywheel.isAtSpeed(rpm) && feedUntilNanos == 0L) {
-                        feedUntilNanos = now + (HiveScoringConfig.FIRE_TIME_MS * 1e6).toLong()
-                        BlackBox.event("fire_start", "rpm" to rpm, "distanceCm" to t.distanceCm)
+                    if (aligned && flywheel.isAtSpeed(rpm) &&
+                        fireState == FireState.IDLE && ballsHeld > 0 &&
+                        loader.phase == LoaderPhase.HOME && !loader.busy
+                    ) {
+                        loader.stroke()
+                        fireState = FireState.STROKING
+                        BlackBox.event(
+                            "fire_start", "rpm" to rpm,
+                            "distanceCm" to t.distanceCm, "ballsHeld" to ballsHeld,
+                        )
                     }
                 } else if (hivePos != null) {
                     // remember where the hive was even with no live tag
@@ -293,15 +307,32 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
                     )
                 }
 
-                // feed window: hold the intake on until FIRE_TIME_MS elapses
-                if (feedUntilNanos != 0L) {
-                    jamGuard?.update(spinning = true)
-                    if (now >= feedUntilNanos) {
-                        intake.stop()
-                        feedUntilNanos = 0L
-                        ballsHeld = 0
-                        BlackBox.event("fire_done", "rpm" to rpm)
-                    }
+                // loader fire cycle: stroke -> watch RPM dip -> retract -> recover
+                // The intake never runs during fire — the loader meters balls.
+                when (fireState) {
+                    FireState.STROKING ->
+                        if (!loader.busy) {
+                            shotDetector.arm()
+                            fireState = FireState.WATCHING
+                        }
+                    FireState.WATCHING ->
+                        when (shotDetector.update()) {
+                            ShotDetector.State.CONFIRMED, ShotDetector.State.MISSED -> {
+                                ballsHeld = (ballsHeld - 1).coerceAtLeast(0)
+                                loader.retract()
+                                fireState = FireState.RECOVERING
+                                BlackBox.event("fire_ball_done", "ballsHeld" to ballsHeld)
+                            }
+                            else -> {}
+                        }
+                    FireState.RECOVERING ->
+                        if (!loader.busy && loader.phase == LoaderPhase.HOME &&
+                            flywheel.isAtSpeed(rpm)
+                        ) {
+                            shotDetector.idle()
+                            fireState = FireState.IDLE
+                        }
+                    FireState.IDLE -> {}
                 }
             }
 

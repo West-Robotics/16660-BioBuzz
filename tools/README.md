@@ -133,7 +133,56 @@ The shadow-mode planner records what the AI **would** have done each second
 while the human drove — compare its decision histogram in `report.txt` against
 what actually happened to quantify "is the AI better than us yet?"
 
-## 4. Legality
+## 4. Learning tools — the robot gets better between matches
+
+These close the Black Box loop: matches record data, these tools turn it into
+better constants, you paste the output back into `globals.kt`.
+
+### `shooter_refit.py` — the shooter curve learns from every confirmed shot
+
+Every `fire_start` → `shot_confirmed` pair with a live hive distance is a free
+calibration sample. Buckets them by distance, averages the RPM that worked,
+prints a refined `SHOOTER_CALIBRATION_*` block (any number of points), plus
+success-per-RPM-band and battery-voltage-on-misses diagnostics:
+
+```bash
+python3 shooter_refit.py ../blackbox
+python3 shooter_refit.py ../blackbox --bin-cm 15 --min-samples 3
+```
+
+### `planner_fit.py` — planner costs measured, not guessed
+
+Measures real robot speed (from pose deltas), real collect cycles
+(`COLLECT_BALL` decision → `ball_collected`), real score cycles, and loader
+stroke→confirm timing, then prints suggested `ROBOT_SPEED_CM_PER_SEC`,
+`PLANNER_COLLECT_HANDLE_SEC`, `PLANNER_SCORE_TOTAL_SEC`:
+
+```bash
+python3 planner_fit.py ../blackbox
+```
+
+### `hsv_autotune.py` — color ranges learned from confirmed pickups
+
+Opens the FRONT frames nearest each confirmed `ball_collected` event, runs
+your current HSV range, accumulates the ball blobs' real pixel values, and
+proposes tightened saturation/value bounds (hue stays). Needs
+`opencv-python`. Always sanity-check the proposal with `hsv_calibrator.py`
+before pasting:
+
+```bash
+python3 hsv_autotune.py ../blackbox --hsv "14 100 100 35 255 255"
+python3 hsv_autotune.py ../blackbox --label "Nectar Blue"
+```
+
+### The weekly loop
+
+1. Play matches/practice (Black Box on).
+2. `blackbox_builder.py` — review the report.
+3. `shooter_refit.py` + `planner_fit.py` (+ `hsv_autotune.py` if colors drift).
+4. Paste suggested constants into `globals.kt` (after eyeballing them).
+5. Repeat — the robot gets sharper every session, and the data proves it.
+
+## 5. Legality
 
 Before using the Black Box frame capture or the SelfPlay OpMode in an
 official match, read `docs/LEGALITY-REVIEW.md` (rule-by-rule analysis +

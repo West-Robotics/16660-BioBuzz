@@ -54,6 +54,7 @@ class BioBuzzAutonomous : LinearOpMode() {
     private lateinit var ballLocator: BallLocator
     private lateinit var intake: Intake
     private lateinit var flywheel: FlyWheel
+    private lateinit var loader: Loader
     private val world = WorldModel()
 
     override fun runOpMode() {
@@ -78,6 +79,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         hive = HiveScoring(aprilTagProcessor)
         intake = Intake()
         flywheel = FlyWheel()
+        loader = Loader()
 
         vision.attachTo(drive, enableCorrections = VisionTuning.FUSION_ENABLED_DEFAULT)
         BlackBox.start(hardwareMap.appContext, "auto")
@@ -163,13 +165,49 @@ class BioBuzzAutonomous : LinearOpMode() {
                     telemetry.update()
                 }
 
-                // Feed every held ball through the at-speed flywheel.
+                // Fire every held ball: one LOADER stroke per ball, CONFIRMED
+                // by the flywheel RPM dip, wheels re-verified at speed between
+                // balls. The intake does NOT run during fire — the loader
+                // meters balls straight from the hopper.
                 telemetry.addData("PHASE 4", "FIRING at %.0f RPM".format(rpm))
                 telemetry.update()
-                intake.spinUp(1.0)
-                sleep(HiveScoringConfig.FIRE_TIME_MS.toLong())
-                intake.stop()
-                BlackBox.event("fire_done", "rpm" to rpm)
+                val detector = ShotDetector(flywheel)
+                var fired = 0
+                var stroking = false
+                var armed = false
+                while (fired < collected && opModeIsActive()) {
+                    when {
+                        stroking && loader.busy -> report()
+                        stroking && !armed -> {
+                            detector.arm()
+                            armed = true
+                        }
+                        armed -> when (detector.update()) {
+                            ShotDetector.State.CONFIRMED, ShotDetector.State.MISSED -> {
+                                fired++
+                                stroking = false
+                                armed = false
+                                loader.retract()
+                                // let the wheels recover before the next ball
+                                val recoverBy = System.nanoTime() +
+                                    (SHOT_RECOVERY_TIMEOUT_MS * 1e6).toLong()
+                                while (opModeIsActive() && !flywheel.isAtSpeed(rpm) &&
+                                    System.nanoTime() < recoverBy
+                                ) {
+                                    report()
+                                }
+                            }
+                            else -> report()
+                        }
+                        !loader.busy && loader.phase == LoaderPhase.HOME -> {
+                            loader.stroke()
+                            stroking = true
+                        }
+                        !loader.busy -> loader.retract() // settle any mid-cycle state
+                        else -> report()
+                    }
+                }
+                BlackBox.event("fire_done", "rpm" to rpm, "fired" to fired, "attempted" to collected)
             } else {
                 telemetry.addData("PHASE 4", "ALIGN FAILED - skipping fire (safe)")
                 telemetry.update()
