@@ -189,3 +189,62 @@ official match, read `docs/LEGALITY-REVIEW.md` (rule-by-rule analysis +
 verification checklist). Kill switches: `BLACKBOX_ENABLED` and
 `SHADOW_PLANNER_ENABLED` in `globals.kt`.
 
+## 6. Neural nets (all on-robot: TFLite detector + pure-Kotlin shot predictor)
+
+Staged plan: **B (shot predictor) first, then A (ball detector), C (imitation)
+later**. Everything runs INSIDE the Robot Controller app on the robot — no
+co-processor, no network, lowest latency. Trained models live in the app's
+external storage (the same folder that contains `blackbox/`): make an `nn/`
+folder there and drop in:
+
+    nn/shot_predictor.json     tiny MLP weights — pure Kotlin runs it
+    nn/ball_detector.tflite    tiny YOLO, float-I/O TFLite export
+
+### Stage B — shot-outcome predictor
+
+1. Play matches / run the calibration OpMode with the Black Box on.
+2. `python3 train_shot_predictor.py ../blackbox`
+   (needs >= 30 logged shots with live hive distances and MIXED outcomes;
+   needs `numpy`)
+3. Copy the printed JSON to `<app files>/nn/shot_predictor.json`.
+4. Run the **Neural Net Test** OpMode — the P(hit) table should look like a
+   sensible curve, high where the shooter is dialed in.
+5. Keep `SHOT_PREDICTOR_MODE = ADVISORY` for a few matches (every prediction
+   is logged as `nn_shot` records — review with blackbox_builder), then flip
+   to `REFEREE` to let it nudge low-probability shots by at most +/- 5% RPM.
+
+### Stage A — ball/flower detector (tiny YOLO)
+
+1. `python3 auto_label.py ../blackbox --out dataset`
+   The HSV pipeline acts as the teacher: every saved FRONT frame gets
+   labeled; background frames are kept as negatives.
+2. `python3 label_review.py dataset`
+   Fix the ~5% the teacher got wrong: `a` = add-mode then drag to draw,
+   click + `d` = delete, `c` = cycle class, `s` = save, `n`/`p` = navigate.
+3. `pip install ultralytics` (LAPTOP only), then:
+   `python3 train_detector.py dataset --model yolov8n.pt --imgsz 320`
+   Any tiny ultralytics model works — use the newest nano your install has.
+   Keep `--imgsz 320`: the Control Hub must run this in real time next to
+   the rest of vision.
+4. Copy the exported `.tflite` to `<app files>/nn/ball_detector.tflite`.
+5. Bench-check with the **Neural Net Test** OpMode — detections draw cyan on
+   the Driver Station preview. Authority ladder (`NN_DETECTOR_MODE`):
+   **ADVISORY** (default: preview + logs only) -> **REFEREE** (removes HSV
+   blobs the detector doesn't corroborate) -> **PRIMARY** (also adds
+   detector-only finds as targets).
+
+### Stage C — imitation policy (data collection already running)
+
+Shadow-mode logs (planner decisions + full human inputs + outcomes) are the
+training set. When there's a pile of sessions, the trainer gets built the
+same way: auto-label from logs, train heavy on the laptop, deploy small.
+
+### Performance notes
+
+* `NN_DETECT_HZ = 3` on the Control Hub is a good start — the CPU also runs
+  the HSV pipeline, AprilTags, and frame capture. Watch the preview FPS.
+* The shot predictor costs microseconds (it's ~50 multiply-adds in Kotlin).
+* Both nets log everything (`nn_shot`, `nn_det`, `nn_status` records), so
+  ADVISORY mode doubles as the evaluation harness before flipping authority.
+
+

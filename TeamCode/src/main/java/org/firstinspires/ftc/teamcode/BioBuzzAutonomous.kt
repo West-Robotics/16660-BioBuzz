@@ -10,6 +10,8 @@ import com.qualcomm.robotcore.eventloop.opmode.Autonomous
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import org.firstinspires.ftc.teamcode.blackbox.BlackBox
 import org.firstinspires.ftc.teamcode.blackbox.FrameGrabProcessor
+import org.firstinspires.ftc.teamcode.nn.DetectorProcessor
+import org.firstinspires.ftc.teamcode.nn.ShotPredictor
 import org.firstinspires.ftc.teamcode.roadrunner.MecanumDrive
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.teamcode.vision.VisionTuning
@@ -74,7 +76,8 @@ class BioBuzzAutonomous : LinearOpMode() {
         vision = VisionSubsystem(
             hardwareMap,
             extraUpProcessors = listOf(aprilTagProcessor, tagOverlay, FrameGrabProcessor("UP")),
-            extraFrontProcessors = ballLocator.processors + FrameGrabProcessor("FRONT"),
+            extraFrontProcessors = ballLocator.processors + FrameGrabProcessor("FRONT") +
+                DetectorProcessor(hardwareMap.appContext),
         )
         hive = HiveScoring(aprilTagProcessor)
         intake = Intake()
@@ -83,6 +86,7 @@ class BioBuzzAutonomous : LinearOpMode() {
 
         vision.attachTo(drive, enableCorrections = VisionTuning.FUSION_ENABLED_DEFAULT)
         BlackBox.start(hardwareMap.appContext, "auto")
+        ShotPredictor.ensureLoaded(hardwareMap.appContext)
 
         // ---- INIT: pick your alliance before the match starts ----
         // D-pad LEFT = RED, D-pad RIGHT = BLUE. HiveScoring only ever targets
@@ -143,7 +147,12 @@ class BioBuzzAutonomous : LinearOpMode() {
             // ---- PHASE 4: FIRE (at the calibrated speed, feed until done) ----
             BlackBox.event("phase", "name" to "4-fire")
             if (aligned) {
-                val rpm = hive.shootingRpmFor(hive.update())
+                val fireTarget = hive.update()
+                val rpm = ShotPredictor.adjustRpm(
+                    hive.shootingRpmFor(fireTarget),
+                    fireTarget?.distanceCm ?: 0.0,
+                    "auto",
+                )
                 flywheel.spinToRpm(rpm)
                 BlackBox.event("fire_start", "rpm" to rpm)
 
@@ -446,9 +455,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             "hiveCm" to t?.distanceCm, "hiveBearing" to t?.bearingDeg,
             "flyL" to flywheel.measuredLeftRpm(),
             "flyR" to flywheel.measuredRightRpm(),
-            "batteryV" to (try {
-                hardwareMap.voltageSensor.iterator().next().voltage
-            } catch (_: Exception) { 0.0 }),
+            "batteryV" to ShotPredictor.reportHardwareMapVolts(hardwareMap),
         )
         world.logToBlackBox()
 

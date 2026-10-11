@@ -32,6 +32,7 @@ conservative form available.
 | SelfPlay teleop (deadman) | Robot self-drives; human HOLDS left trigger, release = stop; Y = hint | Game Rules + Tournament Rules: driver control, disabling | Conservative design: a human hand is on the controller the entire match, and the robot still responds to the Driver Station stop/disable as always. VERIFY there is no BioBuzz-specific rule requiring continuous active driver input |
 | Flywheel distance-based fire | Software-only | none | Safe |
 | Tilt guard / jam reflex | Software-only, cuts power | Safety rules | Safe (safety-positive) |
+| Neural nets (TFLite ball detector + Kotlin MLP shot predictor) | Inference only, entirely inside the RC app; no training, no network, no new hardware — the TFLite jar is just a software dependency | Robot Rules: permitted electronics/computing (all on the legal Robot Controller); nothing transmits | Safe as built. Authority ladder defaults to ADVISORY (predictions logged, behavior unchanged) — flip to REFEREE/PRIMARY only after the logged data proves the model |
 | Post-match processing (`blackbox_builder.py`) | Runs on a laptop in the pit | Tournament Rules: between-match activity | Safe — analyzing your own logs between matches is ordinary pit work. Don't hold up the field or queue with it |
 | ~~Remote operation~~ | — | explicitly NOT built | You're right, it's illegal: the robot must be controlled via the field Driver Station with no other radio links. Not attempted |
 

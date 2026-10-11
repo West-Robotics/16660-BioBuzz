@@ -7,6 +7,8 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
 import org.firstinspires.ftc.teamcode.blackbox.BlackBox
 import org.firstinspires.ftc.teamcode.blackbox.FrameGrabProcessor
+import org.firstinspires.ftc.teamcode.nn.DetectorProcessor
+import org.firstinspires.ftc.teamcode.nn.ShotPredictor
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.teamcode.vision.VisionTuning
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
@@ -64,11 +66,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
 
     private fun toCm(inches: Double) = inches * 2.54
 
-    private fun batteryVolts(): Double = try {
-        hardwareMap.voltageSensor.iterator().next().voltage
-    } catch (_: Exception) {
-        0.0
-    }
+    private fun batteryVolts(): Double = ShotPredictor.reportHardwareMapVolts(hardwareMap)
 
     /** Wraps an angle to (-PI, PI]. */
     private fun wrap(a: Double): Double {
@@ -108,7 +106,8 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
         vision = VisionSubsystem(
             hardwareMap,
             extraUpProcessors = listOf(aprilTagProcessor, tagOverlay, upFrames),
-            extraFrontProcessors = ballLocator.processors + frontFrames,
+            extraFrontProcessors = ballLocator.processors + frontFrames +
+                DetectorProcessor(hardwareMap.appContext),
         )
         hive = HiveScoring(aprilTagProcessor)
         intake = Intake()
@@ -119,6 +118,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
 
         vision.attachTo(drive, enableCorrections = VisionTuning.FUSION_ENABLED_DEFAULT)
         BlackBox.start(hardwareMap.appContext, "selfplay")
+        ShotPredictor.ensureLoaded(hardwareMap.appContext)
 
         // ---- INIT: alliance + instructions ----
         while (!isStarted && !isStopRequested) {
@@ -279,7 +279,11 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
 
             PlannerAction.GO_SCORE -> {
                 val t = hive.update()
-                val rpm = hive.shootingRpmFor(t)
+                val rpm = ShotPredictor.adjustRpm(
+                    hive.shootingRpmFor(t),
+                    t?.distanceCm ?: 0.0,
+                    "selfplay",
+                )
                 flywheel.spinToRpm(rpm)
 
                 if (t != null) {

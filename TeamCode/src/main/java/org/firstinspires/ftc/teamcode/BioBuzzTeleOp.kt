@@ -4,6 +4,8 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
 import org.firstinspires.ftc.teamcode.blackbox.BlackBox
 import org.firstinspires.ftc.teamcode.blackbox.FrameGrabProcessor
+import org.firstinspires.ftc.teamcode.nn.DetectorProcessor
+import org.firstinspires.ftc.teamcode.nn.ShotPredictor
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
 
@@ -53,11 +55,12 @@ class BioBuzzTeleOp : LinearOpMode() {
         val ballLocator = BallLocator()
         val upFrames = FrameGrabProcessor("UP")
         val frontFrames = FrameGrabProcessor("FRONT")
+        val nnDetector = DetectorProcessor(hardwareMap.appContext)
 
         val vision = VisionSubsystem(
             hardwareMap,
             extraUpProcessors = listOf(aprilTagProcessor, tagOverlay, upFrames),
-            extraFrontProcessors = ballLocator.processors + frontFrames,
+            extraFrontProcessors = ballLocator.processors + frontFrames + nnDetector,
         )
         val hive = HiveScoring(aprilTagProcessor)
         val cfg = HiveScoringConfig
@@ -66,6 +69,7 @@ class BioBuzzTeleOp : LinearOpMode() {
         // The shadow planner watches the human drive and logs what IT would
         // do each second — pure observation, it never touches the motors.
         BlackBox.start(hardwareMap.appContext, "teleop")
+        ShotPredictor.ensureLoaded(hardwareMap.appContext)
         val shadowWorld = WorldModel()
         val shadowPlanner = StrategicPlanner()
         val tiltGuard = TiltGuard(hardwareMap)
@@ -114,7 +118,11 @@ class BioBuzzTeleOp : LinearOpMode() {
             // PRIMED at FLYWHEEL_PRIME_RPM so spin-up to any shot is quick.
             val manualFire = gamepad1.right_trigger > 0.3
             val assistFire = alignAssist && hive.zoneOf(target) == ScoringZone.ALIGNED
-            val shootingRpm = hive.shootingRpmFor(target)
+            val shootingRpm = ShotPredictor.adjustRpm(
+                hive.shootingRpmFor(target),
+                target?.distanceCm ?: 0.0,
+                "teleop",
+            )
             when {
                 manualFire || assistFire -> flywheel.spinToRpm(shootingRpm)
                 FLYWHEEL_PRIME_ENABLED -> flywheel.prime()
@@ -206,9 +214,7 @@ class BioBuzzTeleOp : LinearOpMode() {
                     "shootingRpm" to shootingRpm, "atSpeed" to readyToFire,
                     "flyL" to flywheel.measuredLeftRpm(),
                     "flyR" to flywheel.measuredRightRpm(),
-                    "batteryV" to (try {
-                        hardwareMap.voltageSensor.iterator().next().voltage
-                    } catch (_: Exception) { 0.0 }),
+                    "batteryV" to ShotPredictor.reportHardwareMapVolts(hardwareMap),
                     "tiltDeg" to tiltGuard.tiltDeg(),
                     "shots" to loader.strokeCount,
                 )

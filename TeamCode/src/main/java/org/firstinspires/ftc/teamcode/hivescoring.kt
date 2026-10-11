@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import org.firstinspires.ftc.robotcore.external.Telemetry
 import org.firstinspires.ftc.robotcore.internal.camera.calibration.CameraCalibration
+import org.firstinspires.ftc.teamcode.nn.NeuralReferee
 import org.firstinspires.ftc.teamcode.vision.CameraId
 import org.firstinspires.ftc.teamcode.vision.VisionConfig
 import org.firstinspires.ftc.vision.VisionProcessor
@@ -383,7 +384,10 @@ class BallLocator {
         label, widthMm, isBall,
     )
 
-    /** All currently visible, non-noise targets (floor balls + flowers). */
+    /** All currently visible, non-noise targets (floor balls + flowers),
+     *  passed through the NeuralReferee per NN_DETECTOR_MODE (OFF/ADVISORY
+     *  pass straight through; REFEREE removes uncorroborated blobs; PRIMARY
+     *  can also add detector-only finds). */
     fun visibleTargets(): List<BallTarget> {
         val out = mutableListOf<BallTarget>()
         for (src in listOf(pollen, nectarBlue, nectarRed, flower)) {
@@ -412,7 +416,7 @@ class BallLocator {
                 )
             }
         }
-        return out
+        return NeuralReferee.filter(out)
     }
 
     private fun balls(): List<BallTarget> = visibleTargets().filter { it.label != "Flower" }

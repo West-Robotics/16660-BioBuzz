@@ -87,6 +87,36 @@ const val SHOT_DIP_THRESHOLD_RPM = 250.0  // dip below baseline that counts as a
 const val SHOT_DETECT_WINDOW_MS = 900.0    // how long after a stroke we watch
 const val SHOT_RECOVERY_TIMEOUT_MS = 2500.0 // wait for wheels to return to speed
 
+// ================== NEURAL NETS (all on-robot: TFLite + pure-Kotlin MLP) ==================
+// Everything runs inside the Robot Controller app itself — no co-processor, no
+// network, lowest possible latency. Trained models live in the app's external
+// storage (next to blackbox/): copy them over USB after training on the
+// computer (see tools/README.md, the neural net section).
+//
+// Authority ladder (each component independently switchable):
+//   OFF       not loaded — zero cost
+//   ADVISORY  predictions go to telemetry + Black Box only (run this first,
+//             for several matches, until the logged data proves the model)
+//   REFEREE   the model can override the classical pipeline when confident
+//   PRIMARY   the model can also ADD detections the classical pipeline missed
+enum class NnMode { OFF, ADVISORY, REFEREE, PRIMARY }
+
+// -- Ball/flower detector (tiny YOLO via TFLite; tools/auto_label + train_detector) --
+val NN_DETECTOR_MODE = NnMode.ADVISORY   // flip to REFEREE when the data says so
+const val NN_DETECT_HZ = 3.0             // inference rate — keep LOW: the hub CPU also runs vision
+const val NN_DETECT_CONFIDENCE = 0.45    // detector score floor to accept a box
+const val NN_DETECT_IOU = 0.45           // non-max suppression overlap cap
+const val NN_REF_STALE_MS = 600.0         // a referee verdict is usable this long
+const val NN_REF_MARGIN = 1.2            // blob center must sit inside a NN box x this margin
+const val NN_MODEL_FILE = "nn/ball_detector.tflite"
+val NN_LABELS = listOf("Pollen", "Nectar Blue", "Nectar Red", "Flower")
+
+// -- Shot-outcome predictor (tiny MLP, pure Kotlin — no TFLite needed) --
+val SHOT_PREDICTOR_MODE = NnMode.ADVISORY // flip to REFEREE to apply the learned nudge
+const val SHOT_PREDICTOR_MIN_CONFIDENCE = 0.50 // below this predicted hit chance -> adjust
+const val SHOT_PREDICTOR_MAX_ADJUST = 0.05     // bounded RPM correction: at most +/- 5%
+const val SHOT_PREDICTOR_FILE = "nn/shot_predictor.json"
+
 // ================== BLACK BOX (passive full-match data recorder) ==================
 // Records EVERYTHING (state + both camera frame streams) to the Robot
 // Controller's storage for post-match analysis on a computer. Fully passive:
