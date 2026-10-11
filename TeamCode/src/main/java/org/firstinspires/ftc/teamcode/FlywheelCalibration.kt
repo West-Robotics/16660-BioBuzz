@@ -36,7 +36,7 @@ class FlywheelCalibration : LinearOpMode() {
     private var fineRpm = 0.0
     private var spinning = false
 
-    private val flywheel = FlyWheel()
+    private lateinit var flywheel: FlyWheel
     private val loader = Loader()
 
     // Edge-detection memory so one button press = exactly one action.
@@ -52,12 +52,13 @@ class FlywheelCalibration : LinearOpMode() {
         (rpmSteps[stepIdx] + fineRpm).coerceIn(0.0, FLYWHEEL_MOTOR_MAX_RPM)
 
     override fun runOpMode() {
-        // boot probe: this OpMode exists to test the shooter + loader
+        // boot probe: this OpMode exists to test the shooter + loader — a
+        // single flywheel motor is enough for bench testing.
         val hw = HardwareProbe.probe(hardwareMap)
-        if (!hw.shooter || !hw.loaderServo) {
+        if (!hw.anyFlywheel || !hw.loaderServo) {
             while (!isStopRequested) {
                 telemetry.addLine("!! SHOOTER HARDWARE NOT DETECTED !!")
-                telemetry.addLine("Calibration needs the flywheel motors + loader servo.")
+                telemetry.addLine("Calibration needs at least one flywheel motor + the loader servo.")
                 telemetry.addData("Missing", hw.missingList.joinToString(", "))
                 telemetry.update()
             }
@@ -66,6 +67,7 @@ class FlywheelCalibration : LinearOpMode() {
 
         BlackBox.start(hardwareMap.appContext, "calib")
         hw.logToBlackBox()
+        flywheel = FlyWheel(hasLeft = hw.flywheelLeft, hasRight = hw.flywheelRight)
         loader.home()
         while (!isStarted && !isStopRequested) {
             telemetry.addLine("FLYWHEEL CALIBRATION (${rpmSteps.size} RPM steps)")

@@ -45,9 +45,9 @@ class BioBuzzTeleOp : LinearOpMode() {
         val hw = HardwareProbe.probe(hardwareMap)
         val manualOnly = !hw.vision
 
-        val drivetrain = Drivetrain()
-        val intake = Intake()
-        val flywheel = FlyWheel()
+        val drivetrain = if (hw.driveMotors) Drivetrain() else null
+        val intake = Intake(hw.intakeMotor)
+        val flywheel = FlyWheel(hasLeft = hw.flywheelLeft, hasRight = hw.flywheelRight)
         val loader = Loader().also { it.home() }
         val shotDetector = ShotDetector(flywheel)
 
@@ -139,7 +139,7 @@ class BioBuzzTeleOp : LinearOpMode() {
             // PRIMED at FLYWHEEL_PRIME_RPM so spin-up to any shot is quick.
             val manualFire = gamepad1.right_trigger > 0.3
             val assistFire = alignAssist && hive?.zoneOf(target) == ScoringZone.ALIGNED
-            val shootingRpm = if (hw.shooter) {
+            val shootingRpm = if (flywheel.anyMotor) {
                 ShotPredictor.adjustRpm(
                     hive?.shootingRpmFor(target) ?: FLYWHEEL_MOTOR_MAX_RPM,
                     target?.distanceCm ?: 0.0,
@@ -148,14 +148,14 @@ class BioBuzzTeleOp : LinearOpMode() {
             } else {
                 0.0
             }
-            if (hw.shooter) {
+            if (flywheel.anyMotor) {
                 when {
                     manualFire || assistFire -> flywheel.spinToRpm(shootingRpm)
                     FLYWHEEL_PRIME_ENABLED -> flywheel.prime()
                     else -> flywheel.stop()
                 }
             }
-            val readyToFire = hw.shooter && flywheel.isAtSpeed(shootingRpm)
+            val readyToFire = flywheel.anyMotor && flywheel.isAtSpeed(shootingRpm)
 
             // ---- intake: manual only — the LOADER meters balls during fire ----
             if (hw.intakeMotor) {
@@ -222,7 +222,7 @@ class BioBuzzTeleOp : LinearOpMode() {
             }
 
             // ---- drive (always works — that's the point of the fallback) ----
-            if (hw.driveMotors) drivetrain.driveTeleOp(forward, strafe, turn)
+            drivetrain?.driveTeleOp(forward, strafe, turn)
             vision?.periodic()
 
             if (manualOnly) {
@@ -256,8 +256,8 @@ class BioBuzzTeleOp : LinearOpMode() {
                     "trigger" to gamepad1.right_trigger.toDouble(),
                     "hiveCm" to target?.distanceCm, "hiveBearing" to target?.bearingDeg,
                     "shootingRpm" to shootingRpm, "atSpeed" to readyToFire,
-                    "flyL" to (if (hw.shooter) flywheel.measuredLeftRpm() else 0.0),
-                    "flyR" to (if (hw.shooter) flywheel.measuredRightRpm() else 0.0),
+                    "flyL" to flywheel.measuredLeftRpm(),
+                    "flyR" to flywheel.measuredRightRpm(),
                     "batteryV" to ShotPredictor.reportHardwareMapVolts(hardwareMap),
                     "tiltDeg" to tiltGuard.tiltDeg(),
                     "shots" to loader.strokeCount,
@@ -271,8 +271,8 @@ class BioBuzzTeleOp : LinearOpMode() {
                 "FLYWHEEL",
                 "cmd %.0f  L %.0f  R %.0f RPM  %s".format(
                     shootingRpm,
-                    if (hw.shooter) flywheel.measuredLeftRpm() else 0.0,
-                    if (hw.shooter) flywheel.measuredRightRpm() else 0.0,
+                    flywheel.measuredLeftRpm(),
+                    flywheel.measuredRightRpm(),
                     if (readyToFire) "AT SPEED" else "spinning up",
                 ),
             )
@@ -296,9 +296,9 @@ class BioBuzzTeleOp : LinearOpMode() {
         }
 
         // ---- stop cleanly ----
-        drivetrain.flushMotors()
-        if (hw.intakeMotor) intake.stop()
-        if (hw.shooter) flywheel.stop()
+        drivetrain?.flushMotors()
+        intake.stop()
+        flywheel.stop()
         vision?.close()
         BlackBox.stop()
     }

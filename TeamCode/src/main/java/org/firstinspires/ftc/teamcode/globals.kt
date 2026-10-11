@@ -206,10 +206,13 @@ const val FLOWER_SETTLE_AFTER_PULL_MS = 600L // intake time to swallow the relea
  * final design (servo sweep, arm motion, winch, etc.). It runs ONCE per
  * flower stop, on the OpMode thread, so Thread.sleep / blocking waits are OK.
  *
+ * The active OpMode passes in its own Intake/Loader instances (there are no
+ * hardware singletons anymore — see main.kt).
+ *
  * Default placeholder: reverse-pulse the intake (assumes pulling = backing
  * the ball out with the intake until a real mechanism exists).
  */
-var flowerPullRoutine: () -> Unit = {
+var flowerPullRoutine: (Intake, Loader) -> Unit = { intake, _ ->
     intake.spinUp(-1.0)
     try {
         Thread.sleep(1000)

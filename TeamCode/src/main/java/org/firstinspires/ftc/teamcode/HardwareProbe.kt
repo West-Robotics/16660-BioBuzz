@@ -41,6 +41,9 @@ object HardwareProbe {
         /** Both flywheel motors present. */
         val shooter: Boolean get() = flywheelLeft && flywheelRight
 
+        /** At least one flywheel motor present (bench-testable). */
+        val anyFlywheel: Boolean get() = flywheelLeft || flywheelRight
+
         /** Everything the autonomous / SelfPlay stack touches. */
         val fullAutonomy: Boolean
             get() = driveMotors && vision && imu && shooter && intakeMotor && loaderServo

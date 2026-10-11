@@ -195,26 +195,37 @@ class Drivetrain : Mechanism {
 
     }
 }
-class Intake : Mechanism {
-    val intakeMotor = nextYellowJacket(IntakeMotor, INTAKE_MOTOR_MAX_RPM, INTAKE_MOTOR_ENCODER_CPR) {
-        direction = NextMotor.Direction.FORWARD // use FORWARD or REVERSE
-        zeroPowerBehavior = NextMotor.ZeroPowerBehavior.FLOAT // use BRAKE or FLOAT
-    }
+class Intake(private val hasMotor: Boolean = true) : Mechanism {
+
+    /**
+     * Null when the intake motor isn't in the configuration — NextMotor
+     * self-registers with the NextFTC event loop at construction, so a motor
+     * must never be constructed for a missing device (background-thread
+     * crash). Probe-gated OpModes pass hasMotor from HardwareProbe.
+     */
+    val intakeMotor: NextMotor? =
+        if (hasMotor) nextYellowJacket(IntakeMotor, INTAKE_MOTOR_MAX_RPM, INTAKE_MOTOR_ENCODER_CPR) {
+            direction = NextMotor.Direction.FORWARD // use FORWARD or REVERSE
+            zeroPowerBehavior = NextMotor.ZeroPowerBehavior.FLOAT // use BRAKE or FLOAT
+        } else null
+
+    val available: Boolean get() = hasMotor
+
     fun spinUp(speed: Double = 1.0) {
         // NOTE: full range -1..1 — reverse (gamepad B in teleop) is a real
         // reverse here; the old code clamped negatives to a stop.
         val velocity = speed.coerceIn(-1.0, 1.0) * INTAKE_MOTOR_MAX_RPM
-        intakeMotor.setVelocitySetpoint(velocity.rpm)
+        intakeMotor?.setVelocitySetpoint(velocity.rpm)
     }
     fun stop(breakMotor: Boolean = false) {
-        intakeMotor.zeroPowerBehavior =
+        intakeMotor?.let { m ->
+            m.zeroPowerBehavior =
                 if (breakMotor)
                     NextMotor.ZeroPowerBehavior.BRAKE
                 else
                     NextMotor.ZeroPowerBehavior.FLOAT
-
-        intakeMotor.setVelocitySetpoint(0.0.rpm)
-
+            m.setVelocitySetpoint(0.0.rpm)
+        }
     }
 }
 
@@ -229,24 +240,37 @@ class Intake : Mechanism {
  * stop is slow — keep the wheels PRIMED ([prime]) whenever we hold balls, and
  * pre-spin to the speed the hive distance calls for (see [ShooterModel],
  * driven by [HiveScoring.shootingRpmFor]) while approaching.
+ * PARTIAL-ROBOT SUPPORT: pass hasLeft/hasRight from a HardwareProbe — a
+ * motor is only CONSTRUCTED for a device that exists in the configuration
+ * (NextMotor self-registers with the shared NextFTC event loop, so
+ * constructing one for a missing device crashes on a background thread). A
+ * one-wheel flywheel still spins, reads its encoder, and passes the RPM-dip
+ * shot check — perfect for bench testing; it just can't launch a ball well.
  */
-class FlyWheel : Mechanism {
+class FlyWheel(
+    private val hasLeft: Boolean = true,
+    private val hasRight: Boolean = true,
+) : Mechanism {
 
-    val flyWheelLeft = nextYellowJacket(FlywheelLeftMotor, FLYWHEEL_MOTOR_MAX_RPM, FLYWHEEL_MOTOR_ENCODER_CPR) {
-        direction = NextMotor.Direction.FORWARD
-        zeroPowerBehavior = NextMotor.ZeroPowerBehavior.FLOAT
-    }
+    /** True when at least one wheel exists. */
+    val anyMotor: Boolean get() = hasLeft || hasRight
 
-    val flyWheelRight = nextYellowJacket(FlywheelRightMotor, FLYWHEEL_MOTOR_MAX_RPM, FLYWHEEL_MOTOR_ENCODER_CPR) {
-        direction = NextMotor.Direction.REVERSE // opposite physical spin to the left wheel
-        zeroPowerBehavior = NextMotor.ZeroPowerBehavior.FLOAT
-    }
+    private fun motor(name: String, reverse: Boolean): NextMotor? =
+        if (if (reverse) hasRight else hasLeft)
+            nextYellowJacket(name, FLYWHEEL_MOTOR_MAX_RPM, FLYWHEEL_MOTOR_ENCODER_CPR).apply {
+                direction = if (reverse) NextMotor.Direction.REVERSE else NextMotor.Direction.FORWARD
+                zeroPowerBehavior = NextMotor.ZeroPowerBehavior.FLOAT
+            }
+        else null
 
-    /** Holds both wheels at [rpm], clamped to the motor's real top speed. */
+    private val flyWheelLeft = motor(FlywheelLeftMotor, reverse = false)
+    private val flyWheelRight = motor(FlywheelRightMotor, reverse = true)
+
+    /** Holds whichever wheels exist at [rpm], clamped to the motor's real top speed. */
     fun spinToRpm(rpm: Double) {
         val target = rpm.coerceIn(0.0, FLYWHEEL_MOTOR_MAX_RPM)
-        flyWheelLeft.setVelocitySetpoint(target.rpm)
-        flyWheelRight.setVelocitySetpoint(target.rpm)
+        flyWheelLeft?.setVelocitySetpoint(target.rpm)
+        flyWheelRight?.setVelocitySetpoint(target.rpm)
     }
 
     /** Legacy power-style control: 1.0 = full 6000 RPM, 0 = stopped. */
@@ -254,35 +278,42 @@ class FlyWheel : Mechanism {
         spinToRpm(speed.coerceIn(-1.0, 1.0) * FLYWHEEL_MOTOR_MAX_RPM)
     }
 
-    /** Idles both wheels at [FLYWHEEL_PRIME_RPM] so a real shot is a short hop, not a long spin-up. */
+    /** Idles whichever wheels exist at [FLYWHEEL_PRIME_RPM] so a real shot is a short hop, not a long spin-up. */
     fun prime() {
         spinToRpm(FLYWHEEL_PRIME_RPM)
     }
 
     fun stop(breakMotor: Boolean = false) {
-        flyWheelLeft.zeroPowerBehavior =
-            if (breakMotor)
-                NextMotor.ZeroPowerBehavior.BRAKE
-            else
-                NextMotor.ZeroPowerBehavior.FLOAT
-        flyWheelRight.zeroPowerBehavior = flyWheelLeft.zeroPowerBehavior
-
-        flyWheelLeft.setVelocitySetpoint(0.0.rpm)
-        flyWheelRight.setVelocitySetpoint(0.0.rpm)
+        val zpb = if (breakMotor)
+            NextMotor.ZeroPowerBehavior.BRAKE
+        else
+            NextMotor.ZeroPowerBehavior.FLOAT
+        flyWheelLeft?.let {
+            it.zeroPowerBehavior = zpb
+            it.setVelocitySetpoint(0.0.rpm)
+        }
+        flyWheelRight?.let {
+            it.zeroPowerBehavior = zpb
+            it.setVelocitySetpoint(0.0.rpm)
+        }
     }
 
-    /** Measured LEFT wheel speed from the encoder, in RPM. */
-    fun measuredLeftRpm(): Double = flyWheelLeft.encoderVelocity.into(RotationsPerMinute)
+    /** Measured LEFT wheel speed from the encoder, RPM (0.0 when absent). */
+    fun measuredLeftRpm(): Double = flyWheelLeft?.encoderVelocity?.into(RotationsPerMinute) ?: 0.0
 
-    /** Measured RIGHT wheel speed from the encoder, in RPM. */
-    fun measuredRightRpm(): Double = flyWheelRight.encoderVelocity.into(RotationsPerMinute)
+    /** Measured RIGHT wheel speed from the encoder, RPM (0.0 when absent). */
+    fun measuredRightRpm(): Double = flyWheelRight?.encoderVelocity?.into(RotationsPerMinute) ?: 0.0
 
     /**
-     * True when BOTH wheels are within [toleranceRpm] of [targetRpm]. This is
-     * the "safe to fire" check — launching on slow wheels is a short shot.
+     * True when every EXISTING wheel is within [toleranceRpm] of [targetRpm].
+     * This is the "safe to fire" check — launching on slow wheels is a short
+     * shot. A zero-wheel flywheel is never at speed.
      */
-    fun isAtSpeed(targetRpm: Double, toleranceRpm: Double = FLYWHEEL_SPEED_TOLERANCE_RPM): Boolean =
-        kotlin.math.abs(measuredLeftRpm() - targetRpm) <= toleranceRpm &&
-            kotlin.math.abs(measuredRightRpm() - targetRpm) <= toleranceRpm
+    fun isAtSpeed(targetRpm: Double, toleranceRpm: Double = FLYWHEEL_SPEED_TOLERANCE_RPM): Boolean {
+        if (!anyMotor) return false
+        if (flyWheelLeft != null && kotlin.math.abs(measuredLeftRpm() - targetRpm) > toleranceRpm) return false
+        if (flyWheelRight != null && kotlin.math.abs(measuredRightRpm() - targetRpm) > toleranceRpm) return false
+        return true
+    }
 }
 

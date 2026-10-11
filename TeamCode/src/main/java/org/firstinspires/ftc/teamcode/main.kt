@@ -4,11 +4,12 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp
 import com.qualcomm.robotcore.hardware.Servo
 import com.qualcomm.robotcore.hardware.Gamepad
 
-val drivetrain = Drivetrain()
-val teleOp = CustomTeleOp(drivetrain)
-val intake = Intake()
-val flywheel = FlyWheel()
-val loader = Loader() // the shooter's ball indexer — pairs with `flywheel` above
+// NOTE: there are intentionally NO top-level hardware singletons anymore.
+// NextMotor binds itself to the shared NextFTC event loop at construction,
+// so eagerly constructing motors for devices that aren't configured would
+// crash the app on a background thread (e.g. a one-wheel-flywheel test
+// robot). Every OpMode now constructs exactly what its HardwareProbe says
+// exists — see HardwareProbe.kt.
 
 
 class Experiment : LinearOpMode() {
@@ -23,6 +24,11 @@ class Experiment : LinearOpMode() {
             }
             return
         }
+
+        // Local, probe-gated instances — see the note above the file.
+        val drivetrain = Drivetrain()
+        val teleOp = CustomTeleOp(drivetrain)
+        val loader = Loader().also { it.home() }
 
         drivetrain.driveForward(10.0)
         sleep(5000)

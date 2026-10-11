@@ -187,7 +187,7 @@ class PathfindingTestOpMode : LinearOpMode() {
 
     override fun runOpMode() {
         val visionSystem = VisionSystem(hardwareMap)
-        val strategy = StrategicController(visionSystem, drivetrain)
+        val strategy = StrategicController(visionSystem, Drivetrain(), FlyWheel())
 
         telemetry.addData("Status", "Ready")
         telemetry.addLine("DPAD Up/Right/Left: Add Pollen/Nectar/Unknown ball")

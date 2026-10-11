@@ -408,7 +408,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         if (!positioned) return false
 
         // ==== CUSTOMIZABLE PULL-OUT — edit flowerPullRoutine in globals.kt ====
-        flowerPullRoutine()
+        flowerPullRoutine(intake, loader)
 
         // Give the released ball time to settle into the intake.
         intake.spinUp(1.0)

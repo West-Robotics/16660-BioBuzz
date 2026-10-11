@@ -37,7 +37,7 @@ class IntakeJamGuard(private val intake: Intake) {
     fun update(spinning: Boolean): State {
         val now = System.nanoTime()
         val currentA = try {
-            intake.intakeMotor.current.magnitude
+            intake.intakeMotor?.current?.magnitude ?: 0.0
         } catch (_: Exception) {
             0.0
         }

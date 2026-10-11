@@ -361,7 +361,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
                 drive.setDrivePowers(steerTo(d.targetFieldXcm, d.targetFieldYcm, px, py, h))
                 val live = ballLocator.nearestFlower()
                 if (live != null && live.distanceCm <= FLOWER_APPROACH_CM + 5.0) {
-                    flowerPullRoutine()
+                    flowerPullRoutine(intake, loader)
                     intake.spinUp(1.0)
                     BlackBox.event("flower_pull", "distanceCm" to live.distanceCm)
                 } else {

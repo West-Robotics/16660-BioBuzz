@@ -9,7 +9,11 @@ import kotlin.math.hypot
  * It maintains a map of the field, prioritizes balls, and decides when to switch
  * from collecting to scoring based on game logic and efficiency heuristics.
  */
-class StrategicController(private val vision: VisionSystem, private val drivetrain: Drivetrain) {
+class StrategicController(
+    private val vision: VisionSystem,
+    private val drivetrain: Drivetrain,
+    private val flywheel: FlyWheel,
+) {
 
     // 1. STATE
     private var pollenCount = 0
