@@ -26,6 +26,31 @@ class Loader : Mechanism {
     private var livePhase = LoaderPhase.HOME
     private var motionEndNanos = 0L
 
+    /**
+     * True when no "loader" servo exists in the hardware configuration
+     * (e.g. a motors-only bring-up robot). Every call becomes a safe no-op
+     * instead of crashing the OpMode on the first hardware-map access.
+     */
+    @Volatile
+    var missing = false
+        private set
+
+    /** False when the servo isn't configured — call sites can adapt. */
+    val available: Boolean get() = !missing
+
+    /** Runs a servo write; on any hardware-map failure marks [missing] once. */
+    private fun touch(action: () -> Unit): Boolean {
+        if (missing) return false
+        return try {
+            action()
+            true
+        } catch (e: Exception) {
+            missing = true
+            BlackBox.event("loader_missing", "msg" to (e.message ?: "?"))
+            false
+        }
+    }
+
     /** Completed strokes since [resetCount] — the real "balls fed" counter. */
     var strokeCount = 0
         private set
@@ -53,7 +78,7 @@ class Loader : Mechanism {
 
     /** Commands the servo to the home (gate closed) position. */
     fun home() {
-        servo.position = LOADER_HOME_POSITION
+        if (!touch { servo.position = LOADER_HOME_POSITION }) return
         livePhase = LoaderPhase.RETRACTING
         motionEndNanos = System.nanoTime() + (LOADER_RETRACT_MS * 1e6).toLong()
     }
@@ -65,7 +90,7 @@ class Loader : Mechanism {
      */
     fun stroke(): Boolean {
         if (busy || phase != LoaderPhase.HOME) return false
-        servo.position = LOADER_STROKE_END_POSITION
+        if (!touch { servo.position = LOADER_STROKE_END_POSITION }) return false
         livePhase = LoaderPhase.STROKING
         motionEndNanos = System.nanoTime() + (LOADER_STROKE_MS * 1e6).toLong()
         strokeCount++
@@ -81,7 +106,7 @@ class Loader : Mechanism {
      */
     fun retract(): Boolean {
         if (busy || phase != LoaderPhase.STROKED) return false
-        servo.position = LOADER_HOME_POSITION
+        if (!touch { servo.position = LOADER_HOME_POSITION }) return false
         livePhase = LoaderPhase.RETRACTING
         motionEndNanos = System.nanoTime() + (LOADER_RETRACT_MS * 1e6).toLong()
         return true
