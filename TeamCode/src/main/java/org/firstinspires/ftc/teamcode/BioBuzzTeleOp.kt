@@ -41,34 +41,49 @@ class BioBuzzTeleOp : LinearOpMode() {
     private var loadState = LoadState.IDLE
 
     override fun runOpMode() {
+        // ---- BOOT HARDWARE PROBE: degrade gracefully if anything's missing ----
+        val hw = HardwareProbe.probe(hardwareMap)
+        val manualOnly = !hw.vision
+
         val drivetrain = Drivetrain()
         val intake = Intake()
         val flywheel = FlyWheel()
         val loader = Loader().also { it.home() }
         val shotDetector = ShotDetector(flywheel)
 
-        val aprilTagProcessor = AprilTagProcessor.Builder()
-            .setDrawTagOutline(true)
-            .setDrawAxes(false)
-            .build()
-        val tagOverlay = TagInfoOverlay()
-        val ballLocator = BallLocator()
-        val upFrames = FrameGrabProcessor("UP")
-        val frontFrames = FrameGrabProcessor("FRONT")
-        val nnDetector = DetectorProcessor(hardwareMap.appContext)
-
-        val vision = VisionSubsystem(
-            hardwareMap,
-            extraUpProcessors = listOf(aprilTagProcessor, tagOverlay, upFrames),
-            extraFrontProcessors = ballLocator.processors + frontFrames + nnDetector,
-        )
-        val hive = HiveScoring(aprilTagProcessor)
+        // The vision stack (portals, processors, hive estimator) is ONLY built
+        // when both cameras exist in the configuration. Without it we run
+        // MANUAL ONLY mode: no assists, no hive data — just drive + whatever
+        // subsystems (intake/flywheel/loader) are actually configured.
+        var vision: VisionSubsystem? = null
+        var hive: HiveScoring? = null
+        var tagOverlay: TagInfoOverlay? = null
+        var ballLocator: BallLocator? = null
+        if (hw.vision) {
+            val aprilTagProcessor = AprilTagProcessor.Builder()
+                .setDrawTagOutline(true)
+                .setDrawAxes(false)
+                .build()
+            tagOverlay = TagInfoOverlay()
+            ballLocator = BallLocator()
+            val nnDetector = DetectorProcessor(hardwareMap.appContext)
+            vision = VisionSubsystem(
+                hardwareMap,
+                extraUpProcessors = listOf(
+                    aprilTagProcessor, tagOverlay, FrameGrabProcessor("UP"),
+                ),
+                extraFrontProcessors = ballLocator.processors +
+                    FrameGrabProcessor("FRONT") + nnDetector,
+            )
+            hive = HiveScoring(aprilTagProcessor)
+        }
         val cfg = HiveScoringConfig
 
         // ---- Black Box (full-match recorder) + SHADOW PLANNER ----
         // The shadow planner watches the human drive and logs what IT would
         // do each second — pure observation, it never touches the motors.
         BlackBox.start(hardwareMap.appContext, "teleop")
+        hw.logToBlackBox()
         ShotPredictor.ensureLoaded(hardwareMap.appContext)
         val shadowWorld = WorldModel()
         val shadowPlanner = StrategicPlanner()
@@ -87,6 +102,12 @@ class BioBuzzTeleOp : LinearOpMode() {
             telemetry.addLine("BioBuzz TeleOp: LB=capture assist  RB=shoot assist")
             telemetry.addData("ALLIANCE", SELECTED_TEAM.name)
             telemetry.addLine("Select with D-pad: LEFT = RED, RIGHT = BLUE")
+            if (manualOnly) {
+                telemetry.addLine("")
+                telemetry.addLine("!! AUTONOMOUS HARDWARE NOT DETECTED !!")
+                telemetry.addLine("-> falling back to MANUAL ONLY mode")
+                telemetry.addData("Missing", hw.missingList.joinToString(", "))
+            }
             telemetry.update()
         }
 
@@ -99,13 +120,13 @@ class BioBuzzTeleOp : LinearOpMode() {
             var strafe = gamepad1.left_stick_x.toDouble()
             var turn = gamepad1.right_stick_x.toDouble()
 
-            // ---- latest hive measurement (used by assist + flywheel + telemetry) ----
-            val target = hive.update()
-            tagOverlay.publish(target)
+            // ---- latest hive measurement (vision-dependent; null in manual-only) ----
+            val target = hive?.update()
+            tagOverlay?.publish(target)
 
             // ---- SHOOTING ALIGN ASSIST (hold RIGHT bumper) ----
             val alignAssist = gamepad1.right_bumper
-            if (alignAssist) {
+            if (alignAssist && hive != null) {
                 val (f, t) = hive.rangeCorrection(target)
                 forward = (forward + f).coerceIn(-1.0, 1.0)
                 turn = (turn + t).coerceIn(-1.0, 1.0)
@@ -117,30 +138,39 @@ class BioBuzzTeleOp : LinearOpMode() {
             // uncalibrated or no tag is visible). While idle the wheels stay
             // PRIMED at FLYWHEEL_PRIME_RPM so spin-up to any shot is quick.
             val manualFire = gamepad1.right_trigger > 0.3
-            val assistFire = alignAssist && hive.zoneOf(target) == ScoringZone.ALIGNED
-            val shootingRpm = ShotPredictor.adjustRpm(
-                hive.shootingRpmFor(target),
-                target?.distanceCm ?: 0.0,
-                "teleop",
-            )
-            when {
-                manualFire || assistFire -> flywheel.spinToRpm(shootingRpm)
-                FLYWHEEL_PRIME_ENABLED -> flywheel.prime()
-                else -> flywheel.stop()
+            val assistFire = alignAssist && hive?.zoneOf(target) == ScoringZone.ALIGNED
+            val shootingRpm = if (hw.shooter) {
+                ShotPredictor.adjustRpm(
+                    hive?.shootingRpmFor(target) ?: FLYWHEEL_MOTOR_MAX_RPM,
+                    target?.distanceCm ?: 0.0,
+                    "teleop",
+                )
+            } else {
+                0.0
             }
-            val readyToFire = flywheel.isAtSpeed(shootingRpm)
+            if (hw.shooter) {
+                when {
+                    manualFire || assistFire -> flywheel.spinToRpm(shootingRpm)
+                    FLYWHEEL_PRIME_ENABLED -> flywheel.prime()
+                    else -> flywheel.stop()
+                }
+            }
+            val readyToFire = hw.shooter && flywheel.isAtSpeed(shootingRpm)
 
             // ---- intake: manual only — the LOADER meters balls during fire ----
-            when {
-                gamepad1.a -> intake.spinUp(1.0)
-                gamepad1.b -> intake.spinUp(-1.0)
-                else -> intake.stop()
+            if (hw.intakeMotor) {
+                when {
+                    gamepad1.a -> intake.spinUp(1.0)
+                    gamepad1.b -> intake.spinUp(-1.0)
+                    else -> intake.stop()
+                }
             }
 
             // ---- loader: hold X = fire balls one per stroke (manual fire);
             // the align assist strokes automatically once BOTH wheels are at
             // the commanded speed. Each stroke is confirmed by the RPM dip. ----
-            val wantStroke = (manualFire || assistFire) && (gamepad1.x || assistFire) &&
+            val wantStroke = loader.available &&
+                (manualFire || assistFire) && (gamepad1.x || assistFire) &&
                 readyToFire && !loader.busy && loader.phase == LoaderPhase.HOME
             if (wantStroke) {
                 loader.stroke()
@@ -159,8 +189,15 @@ class BioBuzzTeleOp : LinearOpMode() {
                     }
                 LoadState.WATCHING ->
                     when (shotDetector.update()) {
-                        ShotDetector.State.CONFIRMED, ShotDetector.State.MISSED ->
-                            if (loader.retract()) loadState = LoadState.RETRACTING
+                        ShotDetector.State.CONFIRMED, ShotDetector.State.MISSED -> {
+                            if (loader.retract()) {
+                                loadState = LoadState.RETRACTING
+                            } else {
+                                // loader absent (manual-only robot): skip retract
+                                shotDetector.idle()
+                                loadState = LoadState.IDLE
+                            }
+                        }
                         else -> {}
                     }
                 LoadState.RETRACTING ->
@@ -171,8 +208,8 @@ class BioBuzzTeleOp : LinearOpMode() {
                 LoadState.IDLE -> {}
             }
 
-            // ---- BALL CAPTURE ASSIST (hold LEFT bumper) ----
-            if (gamepad1.left_bumper) {
+            // ---- BALL CAPTURE ASSIST (hold LEFT bumper; needs vision) ----
+            if (gamepad1.left_bumper && vision != null && ballLocator != null) {
                 val ball = ballLocator.nearestBall()
                 if (ball != null) {
                     val strafeAssist = cfg.CAPTURE_BEARING_GAIN * ball.bearingDeg
@@ -184,15 +221,22 @@ class BioBuzzTeleOp : LinearOpMode() {
                 }
             }
 
-            // ---- drive (existing NextFTC drivetrain) + fusion + telemetry ----
-            drivetrain.driveTeleOp(forward, strafe, turn)
-            vision.periodic()
+            // ---- drive (always works — that's the point of the fallback) ----
+            if (hw.driveMotors) drivetrain.driveTeleOp(forward, strafe, turn)
+            vision?.periodic()
 
-            hive.addTelemetry(telemetry, target)
+            if (manualOnly) {
+                telemetry.addLine("!! AUTONOMOUS HARDWARE NOT DETECTED !!")
+                telemetry.addLine("-> MANUAL ONLY mode")
+                telemetry.addData("Missing", hw.missingList.joinToString(", "))
+            }
+            hive?.addTelemetry(telemetry, target)
 
             // ---- Black Box + SHADOW PLANNER (observes, never acts) ----
             val now = System.nanoTime()
-            if (now - lastShadowNanos > 1_000_000_000L) {
+            if (vision != null && ballLocator != null &&
+                now - lastShadowNanos > 1_000_000_000L
+            ) {
                 lastShadowNanos = now
                 shadowWorld.update(ballLocator.sightings(), null, null, 0.0, now)
                 shadowWorld.updateHive(target, null, null, 0.0, now)
@@ -212,8 +256,8 @@ class BioBuzzTeleOp : LinearOpMode() {
                     "trigger" to gamepad1.right_trigger.toDouble(),
                     "hiveCm" to target?.distanceCm, "hiveBearing" to target?.bearingDeg,
                     "shootingRpm" to shootingRpm, "atSpeed" to readyToFire,
-                    "flyL" to flywheel.measuredLeftRpm(),
-                    "flyR" to flywheel.measuredRightRpm(),
+                    "flyL" to (if (hw.shooter) flywheel.measuredLeftRpm() else 0.0),
+                    "flyR" to (if (hw.shooter) flywheel.measuredRightRpm() else 0.0),
                     "batteryV" to ShotPredictor.reportHardwareMapVolts(hardwareMap),
                     "tiltDeg" to tiltGuard.tiltDeg(),
                     "shots" to loader.strokeCount,
@@ -227,30 +271,35 @@ class BioBuzzTeleOp : LinearOpMode() {
                 "FLYWHEEL",
                 "cmd %.0f  L %.0f  R %.0f RPM  %s".format(
                     shootingRpm,
-                    flywheel.measuredLeftRpm(),
-                    flywheel.measuredRightRpm(),
+                    if (hw.shooter) flywheel.measuredLeftRpm() else 0.0,
+                    if (hw.shooter) flywheel.measuredRightRpm() else 0.0,
                     if (readyToFire) "AT SPEED" else "spinning up",
                 ),
             )
-            val ball = ballLocator.nearestBall()
+            val ball = if (vision != null) ballLocator?.nearestBall() else null
             if (ball != null) {
                 telemetry.addData(
                     "BALL ${ball.label}",
                     "%.1f cm, %.1f deg".format(ball.distanceCm, ball.bearingDeg),
                 )
-            } else {
+            } else if (!manualOnly) {
                 telemetry.addData("BALL", "none visible")
             }
-            telemetry.addData("Assists", if (alignAssist) "SHOOT" else if (gamepad1.left_bumper) "CAPTURE" else "off")
-            vision.addTelemetry(telemetry)
+            telemetry.addData(
+                "Assists",
+                if (manualOnly) "OFF (manual only)"
+                else if (alignAssist) "SHOOT"
+                else if (gamepad1.left_bumper) "CAPTURE" else "off",
+            )
+            vision?.addTelemetry(telemetry)
             telemetry.update()
         }
 
         // ---- stop cleanly ----
         drivetrain.flushMotors()
-        intake.stop()
-        flywheel.stop()
-        vision.close()
+        if (hw.intakeMotor) intake.stop()
+        if (hw.shooter) flywheel.stop()
+        vision?.close()
         BlackBox.stop()
     }
 }

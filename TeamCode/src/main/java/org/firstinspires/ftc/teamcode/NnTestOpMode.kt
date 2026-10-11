@@ -27,6 +27,18 @@ import java.util.Locale
 class NnTestOpMode : LinearOpMode() {
 
     override fun runOpMode() {
+        // boot probe: without the cameras this OpMode has nothing to test
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.vision) {
+            while (!isStopRequested) {
+                telemetry.addLine("!! AUTONOMOUS HARDWARE NOT DETECTED !!")
+                telemetry.addLine("Neural Net Test needs both cameras — nothing to test.")
+                telemetry.addData("Missing", hw.missingList.joinToString(", "))
+                telemetry.update()
+            }
+            return
+        }
+
         ShotPredictor.ensureLoaded(hardwareMap.appContext)
         val ballLocator = BallLocator()
         val detector = DetectorProcessor(hardwareMap.appContext)

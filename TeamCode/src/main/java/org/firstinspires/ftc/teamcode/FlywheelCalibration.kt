@@ -52,7 +52,20 @@ class FlywheelCalibration : LinearOpMode() {
         (rpmSteps[stepIdx] + fineRpm).coerceIn(0.0, FLYWHEEL_MOTOR_MAX_RPM)
 
     override fun runOpMode() {
+        // boot probe: this OpMode exists to test the shooter + loader
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.shooter || !hw.loaderServo) {
+            while (!isStopRequested) {
+                telemetry.addLine("!! SHOOTER HARDWARE NOT DETECTED !!")
+                telemetry.addLine("Calibration needs the flywheel motors + loader servo.")
+                telemetry.addData("Missing", hw.missingList.joinToString(", "))
+                telemetry.update()
+            }
+            return
+        }
+
         BlackBox.start(hardwareMap.appContext, "calib")
+        hw.logToBlackBox()
         loader.home()
         while (!isStarted && !isStopRequested) {
             telemetry.addLine("FLYWHEEL CALIBRATION (${rpmSteps.size} RPM steps)")

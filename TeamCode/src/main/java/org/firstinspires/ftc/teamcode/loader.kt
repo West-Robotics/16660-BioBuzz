@@ -144,9 +144,12 @@ class ShotDetector(private val flywheel: FlyWheel) {
     private var windowEndNanos = 0L
     private var confirmedCount = 0
 
-    /** Average measured wheel speed (both wheels), RPM. */
-    fun measuredRpm(): Double =
+    /** Average measured wheel speed (both wheels), RPM; 0.0 if hardware is gone. */
+    fun measuredRpm(): Double = try {
         (flywheel.measuredLeftRpm() + flywheel.measuredRightRpm()) / 2.0
+    } catch (_: Exception) {
+        0.0
+    }
 
     /** Arms dip detection. Call immediately after a loader stroke finishes. */
     fun arm() {

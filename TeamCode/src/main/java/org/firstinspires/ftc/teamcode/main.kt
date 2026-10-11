@@ -13,6 +13,17 @@ val loader = Loader() // the shooter's ball indexer — pairs with `flywheel` ab
 
 class Experiment : LinearOpMode() {
     override fun runOpMode() { // setup, code runs once
+        // boot probe: no drive motors configured -> nothing to run
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.driveMotors) {
+            while (!isStopRequested) {
+                telemetry.addLine("!! DRIVE MOTORS NOT DETECTED !!")
+                telemetry.addLine("Check the Driver Station configuration.")
+                telemetry.update()
+            }
+            return
+        }
+
         drivetrain.driveForward(10.0)
         sleep(5000)
         drivetrain.driveBackward(100.0)

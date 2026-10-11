@@ -92,6 +92,22 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
     }
 
     override fun runOpMode() {
+        // ---- boot-time hardware probe: no full autonomy kit -> stay parked ----
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.fullAutonomy) {
+            BlackBox.start(hardwareMap.appContext, "selfplay")
+            hw.logToBlackBox()
+            BlackBox.event("autonomy_unavailable")
+            while (!isStopRequested) {
+                telemetry.addLine("!! AUTONOMOUS HARDWARE NOT DETECTED !!")
+                telemetry.addLine("SelfPlay stays PARKED — run BioBuzz TeleOp (manual) instead.")
+                telemetry.addData("Missing", hw.missingList.joinToString(", "))
+                telemetry.update()
+            }
+            BlackBox.stop()
+            return
+        }
+
         drive = org.firstinspires.ftc.teamcode.roadrunner.MecanumDrive(hardwareMap, Pose2d(0.0, 0.0, 0.0))
 
         val aprilTagProcessor = AprilTagProcessor.Builder()
@@ -118,6 +134,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
 
         vision.attachTo(drive, enableCorrections = VisionTuning.FUSION_ENABLED_DEFAULT)
         BlackBox.start(hardwareMap.appContext, "selfplay")
+        hw.logToBlackBox()
         ShotPredictor.ensureLoaded(hardwareMap.appContext)
 
         // ---- INIT: alliance + instructions ----

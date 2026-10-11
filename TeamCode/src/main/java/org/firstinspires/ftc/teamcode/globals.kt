@@ -16,6 +16,7 @@ const val DrivetrainFrontLeft = "frontleft"
 const val DrivetrainFrontRight = "frontright"
 const val DrivetrainBackLeft = "backleft"
 const val DrivetrainBackRight = "backright"
+const val LoaderServoName = "loader"
 
 const val FlywheelLeftMotor = "flywheelleft"
 const val FlywheelRightMotor = "flywheelright"
@@ -73,7 +74,7 @@ const val FLYWHEEL_FEED_TIME_MS = 1200.0
 // stroke meters exactly ONE ball into the flywheel (~360 deg at the output).
 // Positions are normalized 0.0..1.0 (servo 0..300 deg through your gearing).
 // MEASURE all four values on the real robot before trusting them.
-const val LoaderServoName = "loader"
+
 const val LOADER_HOME_POSITION = 0.0      // servo position holding the gate closed
 const val LOADER_STROKE_END_POSITION = 1.0 // one ball enters the flywheel here
 const val LOADER_STROKE_MS = 800.0       // forward stroke duration incl. margin

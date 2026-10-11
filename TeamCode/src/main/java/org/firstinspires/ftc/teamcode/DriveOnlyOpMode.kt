@@ -25,6 +25,18 @@ import java.util.Locale
 class DriveOnlyOpMode : LinearOpMode() {
 
     override fun runOpMode() {
+        // boot probe: this OpMode touches ONLY the 4 drive motors — if even
+        // those are missing, say so instead of crashing.
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.driveMotors) {
+            while (!isStopRequested) {
+                telemetry.addLine("!! DRIVE MOTORS NOT DETECTED !!")
+                telemetry.addLine("Check the Driver Station configuration.")
+                telemetry.update()
+            }
+            return
+        }
+
         // Touches ONLY frontleft/frontright/backleft/backright.
         val drivetrain = Drivetrain()
 

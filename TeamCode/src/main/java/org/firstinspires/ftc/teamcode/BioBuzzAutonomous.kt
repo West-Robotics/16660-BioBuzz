@@ -60,6 +60,22 @@ class BioBuzzAutonomous : LinearOpMode() {
     private val world = WorldModel()
 
     override fun runOpMode() {
+        // ---- boot-time hardware probe: no full autonomy kit -> stay parked ----
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.fullAutonomy) {
+            BlackBox.start(hardwareMap.appContext, "auto")
+            hw.logToBlackBox()
+            BlackBox.event("autonomy_unavailable")
+            while (!isStopRequested) {
+                telemetry.addLine("!! AUTONOMOUS HARDWARE NOT DETECTED !!")
+                telemetry.addLine("Autonomous stays PARKED — run a TeleOp instead.")
+                telemetry.addData("Missing", hw.missingList.joinToString(", "))
+                telemetry.update()
+            }
+            BlackBox.stop()
+            return
+        }
+
         // ================= initialize =================
         drive = MecanumDrive(hardwareMap, Pose2d(0.0, 0.0, 0.0))
 
@@ -86,6 +102,7 @@ class BioBuzzAutonomous : LinearOpMode() {
 
         vision.attachTo(drive, enableCorrections = VisionTuning.FUSION_ENABLED_DEFAULT)
         BlackBox.start(hardwareMap.appContext, "auto")
+        hw.logToBlackBox()
         ShotPredictor.ensureLoaded(hardwareMap.appContext)
 
         // ---- INIT: pick your alliance before the match starts ----
