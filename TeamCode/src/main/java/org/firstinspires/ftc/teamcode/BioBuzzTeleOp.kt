@@ -217,6 +217,15 @@ class BioBuzzTeleOp : LinearOpMode() {
                 }
             }
 
+            // ---- TILT GUARD: cut drive power, not just warn (the legality ----
+            // review describes this reflex as "cuts power") ----
+            val tipping = tiltGuard.isTipping()
+            if (tipping) {
+                forward = 0.0
+                strafe = 0.0
+                turn = 0.0
+            }
+
             // ---- drive (always works — that's the point of the fallback) ----
             drivetrain?.driveTeleOp(forward, strafe, turn)
             vision?.periodic()
@@ -260,7 +269,7 @@ class BioBuzzTeleOp : LinearOpMode() {
                 )
                 shadowWorld.logToBlackBox()
             }
-            if (tiltGuard.isTipping()) telemetry.addLine("!! TILT WARNING — ease off !!")
+            if (tipping) telemetry.addLine("!! TILT GUARD — drive power cut !!")
             telemetry.addData("LOADER", "%d strokes fired".format(loader.strokeCount))
 
             telemetry.addData(

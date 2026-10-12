@@ -374,20 +374,30 @@ class DetectorProcessor(context: Context) : VisionProcessor {
         if (captureTimeNanos - lastNanos < (1e9 / NN_DETECT_HZ).toLong()) return null
         lastNanos = captureTimeNanos
 
+        var resized: Mat? = null
+        var rgb: Mat? = null
         return try {
+            // 0. VisionProcessor frames are 4-channel RGBA (the SDK's own
+            //    processors use COLOR_RGBA2GRAY/RGBA2RGB). Drop alpha FIRST —
+            //    reading 3 bytes/pixel straight from an RGBA Mat yields
+            //    misaligned garbage after the first pixel.
+            val rgbMat = Mat()
+            Imgproc.cvtColor(f, rgbMat, Imgproc.COLOR_RGBA2RGB)
             // 1. resize to the model's square input (aspect stretched back later)
-            val resized = Mat()
-            Imgproc.resize(f, resized, Size(inputSize.toDouble(), inputSize.toDouble()))
+            val resizedMat = Mat()
+            Imgproc.resize(rgbMat, resizedMat, Size(inputSize.toDouble(), inputSize.toDouble()))
+            resized = resizedMat
+            rgb = rgbMat
             // 2. pixels -> float32 NHWC buffer in [0,1], RGB order like training
             val bytes = ByteArray(inputSize * inputSize * 3)
-            resized.get(0, 0, bytes)
+            resizedMat.get(0, 0, bytes)
             val buf = inputBuf!!
             buf.rewind()
             var i = 0
             while (i < bytes.size) {
                 buf.putFloat((bytes[i].toInt() and 0xFF) / 255f)       // R
-                buf.putFloat((bytes[i + 2].toInt() and 0xFF) / 255f)   // G (BGR->RGB)
-                buf.putFloat((bytes[i + 1].toInt() and 0xFF) / 255f)   // B
+                buf.putFloat((bytes[i + 1].toInt() and 0xFF) / 255f)   // G
+                buf.putFloat((bytes[i + 2].toInt() and 0xFF) / 255f)   // B
                 i += 3
             }
             // 3. allocate output by the model's real shape and run
@@ -400,6 +410,11 @@ class DetectorProcessor(context: Context) : VisionProcessor {
             null
         } catch (_: Exception) {
             null // inference must never stall the vision pipeline
+        } finally {
+            // OpenCV Mats are native heap — always release or the 3 Hz
+            // inference slowly leaks megabytes over a match.
+            rgb?.release()
+            resized?.release()
         }
     }
 

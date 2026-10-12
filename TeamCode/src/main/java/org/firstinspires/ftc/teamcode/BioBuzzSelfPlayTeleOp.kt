@@ -54,6 +54,13 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
     private var fireState = FireState.IDLE
     private lateinit var loader: Loader
     private val shotDetector by lazy { ShotDetector(flywheel) }
+
+    /** Flywheel RPM last commanded in GO_SCORE — the RECOVERING gate reuses it. */
+    private var commandedRpm = 0.0
+    /** nanoTime when RECOVERING began (RECOVERING must never deadlock). */
+    private var recoverySinceNanos = 0L
+    /** Planner target id already pulled this flower approach (one-shot latch). */
+    private var flowerPulledId = -1
     private var clockStartRuntime = -1.0
     private var lastDecision: PlannerDecision? = null
     private var lastLoggedDecision: PlannerDecision? = null
@@ -80,9 +87,12 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
         val desiredHeading = atan2(dy, dx)
         val headingErr = wrap(desiredHeading - h)
         val turn = (0.04 * headingErr).coerceIn(-0.35, 0.35)
+        // Body-frame direction to the target is (cos e, sin e) in Road Runner
+        // (+y = LEFT, heading CCW): target left of heading (e > 0) needs
+        // POSITIVE strafe. The old -sin() crabs away from the target.
         val forward = (0.012 * kotlin.math.hypot(dx, dy) * cos(headingErr))
             .coerceIn(-maxPower, maxPower)
-        val strafe = (0.012 * kotlin.math.hypot(dx, dy) * -sin(headingErr) * 0.5)
+        val strafe = (0.012 * kotlin.math.hypot(dx, dy) * sin(headingErr) * 0.5)
             .coerceIn(-maxPower / 2, maxPower / 2)
         return PoseVelocity2d(Vector2d(forward, strafe), turn)
     }
@@ -99,6 +109,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
                 telemetry.addLine("SelfPlay stays PARKED — run BioBuzz TeleOp (manual) instead.")
                 telemetry.addData("Missing", hw.missingList.joinToString(", "))
                 telemetry.update()
+                sleep(50) // don't busy-spin a core during INIT
             }
             BlackBox.stop()
             return
@@ -199,6 +210,11 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
                     drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), 0.0))
                     intake.stop()
                     flywheel.stop()
+                    // Return the loader home: a mid-stroke release otherwise
+                    // leaves the gate open at STROKE_END, and since strokes
+                    // require phase == HOME, firing would be dead for the rest
+                    // of the match (nothing else in SelfPlay homes it).
+                    if (loader.available) loader.home()
                     shotDetector.idle()
                     fireState = FireState.IDLE
                     BlackBox.log(
@@ -262,6 +278,10 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
         val now = System.nanoTime()
         val hivePos = world.hive()
 
+        // One flower pull per approach: the latch clears as soon as the
+        // planner leaves USE_FLOWER (or targets a different flower).
+        if (d.action != PlannerAction.USE_FLOWER) flowerPulledId = -1
+
         when (d.action) {
             PlannerAction.COLLECT_BALL -> {
                 // Steer toward the REMEMBERED field position — works even when
@@ -291,6 +311,13 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
             }
 
             PlannerAction.GO_SCORE -> {
+                // The intake must NOT run during a score run: NextFTC velocity
+                // setpoints persist until changed, so if the previous action was
+                // COLLECT_BALL the intake would keep spinning through firing.
+                // update(spinning=false) zeroes it AND resets a JAMMED guard
+                // (otherwise one jam would disable the intake all match).
+                jamGuard?.update(spinning = false)
+
                 val t = hive.update()
                 val rpm = ShotPredictor.adjustRpm(
                     hive.shootingRpmFor(t),
@@ -298,6 +325,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
                     "selfplay",
                 )
                 flywheel.spinToRpm(rpm)
+                commandedRpm = rpm
 
                 if (t != null) {
                     // live tag: servo into the window while already at speed
@@ -323,53 +351,79 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
                         PoseVelocity2d(Vector2d(0.0, 0.0), -HiveScoringConfig.SEARCH_TURN_POWER),
                     )
                 }
-
-                // loader fire cycle: stroke -> watch RPM dip -> retract -> recover
-                // The intake never runs during fire — the loader meters balls.
-                when (fireState) {
-                    FireState.STROKING ->
-                        if (!loader.busy) {
-                            shotDetector.arm()
-                            fireState = FireState.WATCHING
-                        }
-                    FireState.WATCHING ->
-                        when (shotDetector.update()) {
-                            ShotDetector.State.CONFIRMED, ShotDetector.State.MISSED -> {
-                                ballsHeld = (ballsHeld - 1).coerceAtLeast(0)
-                                loader.retract()
-                                fireState = FireState.RECOVERING
-                                BlackBox.event("fire_ball_done", "ballsHeld" to ballsHeld)
-                            }
-                            else -> {}
-                        }
-                    FireState.RECOVERING ->
-                        if (!loader.busy && loader.phase == LoaderPhase.HOME &&
-                            flywheel.isAtSpeed(rpm)
-                        ) {
-                            shotDetector.idle()
-                            fireState = FireState.IDLE
-                        }
-                    FireState.IDLE -> {}
-                }
             }
 
             PlannerAction.USE_FLOWER -> {
-                drive.setDrivePowers(steerTo(d.targetFieldXcm, d.targetFieldYcm, px, py, h))
                 val live = ballLocator.nearestFlower()
                 if (live != null && live.distanceCm <= FLOWER_APPROACH_CM + 5.0) {
-                    flowerPullRoutine(intake, loader)
-                    intake.spinUp(1.0)
-                    BlackBox.event("flower_pull", "distanceCm" to live.distanceCm)
+                    // In range: stop, pull ONCE (latched), then keep swallowing.
+                    // The pull routine may block briefly — it must stay SHORT,
+                    // because the deadman is only polled between ticks.
+                    drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), 0.0))
+                    if (d.targetId != flowerPulledId) {
+                        flowerPulledId = d.targetId
+                        flowerPullRoutine(intake, loader)
+                        intake.spinUp(1.0) // swallow the released ball (setpoint persists)
+                        ballsHeld = (ballsHeld + 1).coerceAtMost(MAX_BALLS_HELD)
+                        BlackBox.event(
+                            "flower_pull", "distanceCm" to live.distanceCm,
+                            "ballsHeld" to ballsHeld,
+                        )
+                    }
+                    // keep the jam watch on while swallowing at the flower
+                    jamGuard?.update(spinning = true)
                 } else {
+                    drive.setDrivePowers(steerTo(d.targetFieldXcm, d.targetFieldYcm, px, py, h))
                     jamGuard?.update(spinning = true)
                 }
             }
 
             PlannerAction.PARK, PlannerAction.HOLD -> {
                 drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), 0.0))
+                // update(false) idles the intake and resets a jammed guard
+                jamGuard?.update(spinning = false)
                 intake.stop()
                 if (d.action == PlannerAction.PARK) flywheel.stop() else flywheel.prime()
             }
+        }
+
+        // ---- loader fire cycle: stroke -> watch RPM dip -> retract -> recover ----
+        // Advances under EVERY action so the gate never stays open if the
+        // planner switches away from GO_SCORE mid-cycle. Strokes are only
+        // STARTED in GO_SCORE; this machine only finishes what was started.
+        // (The intake never runs during fire — the loader meters balls.)
+        when (fireState) {
+            FireState.STROKING ->
+                if (!loader.busy) {
+                    shotDetector.arm()
+                    fireState = FireState.WATCHING
+                }
+            FireState.WATCHING ->
+                when (shotDetector.update()) {
+                    ShotDetector.State.CONFIRMED, ShotDetector.State.MISSED -> {
+                        ballsHeld = (ballsHeld - 1).coerceAtLeast(0)
+                        loader.retract()
+                        fireState = FireState.RECOVERING
+                        recoverySinceNanos = now
+                        BlackBox.event("fire_ball_done", "ballsHeld" to ballsHeld)
+                    }
+                    else -> {}
+                }
+            FireState.RECOVERING -> {
+                // Wheels re-verified at speed before the next ball — but with a
+                // timeout, so a stopped flywheel (e.g. the planner parked) can
+                // never wedge the machine in RECOVERING forever.
+                val recovered = !loader.busy && loader.phase == LoaderPhase.HOME &&
+                    flywheel.isAtSpeed(commandedRpm)
+                val timedOut = recoverySinceNanos != 0L &&
+                    now - recoverySinceNanos > (SHOT_RECOVERY_TIMEOUT_MS * 1e6).toLong()
+                if (recovered || timedOut) {
+                    shotDetector.idle()
+                    fireState = FireState.IDLE
+                    recoverySinceNanos = 0L
+                }
+            }
+            FireState.IDLE -> {}
         }
     }
 }

@@ -67,6 +67,7 @@ class BioBuzzAutonomous : LinearOpMode() {
                 telemetry.addLine("Autonomous stays PARKED — run a TeleOp instead.")
                 telemetry.addData("Missing", hw.missingList.joinToString(", "))
                 telemetry.update()
+                sleep(50) // don't busy-spin a core during INIT
             }
             BlackBox.stop()
             return
@@ -122,6 +123,10 @@ class BioBuzzAutonomous : LinearOpMode() {
             )
             telemetry.addData("ALLIANCE", SELECTED_TEAM.name)
             telemetry.addLine("Select with D-pad: LEFT = RED, RIGHT = BLUE")
+            if (MecanumDrive.PARAMS.kV == 0.0 || MecanumDrive.PARAMS.axialGain == 0.0) {
+                telemetry.addLine("!! RR UNTUNED (MecanumDrive.PARAMS are zeros) !!")
+                telemetry.addLine("-> trajectory moves (e.g. PHASE 5 park) will NOT drive the robot")
+            }
             telemetry.update()
         }
 
@@ -167,7 +172,9 @@ class BioBuzzAutonomous : LinearOpMode() {
                     "auto",
                 )
                 flywheel.spinToRpm(rpm)
-                BlackBox.event("fire_start", "rpm" to rpm)
+                // "hiveCm" is required by tools/shooter_refit.py — without it
+                // every autonomous shot is silently unusable for curve fitting.
+                BlackBox.event("fire_start", "rpm" to rpm, "hiveCm" to fireTarget?.distanceCm)
 
                 // Wait until BOTH wheels are actually at the commanded speed
                 // (the 6000 RPM motors spin up slowly) before feeding balls.
@@ -187,6 +194,13 @@ class BioBuzzAutonomous : LinearOpMode() {
                     telemetry.update()
                 }
 
+                if (!flywheel.isAtSpeed(rpm)) {
+                    // Never feed balls into slow wheels: that's a weak shot
+                    // (and a possible stuck ball). Safe-skip instead.
+                    BlackBox.event("fire_aborted", "rpm" to rpm, "reason" to "wheels not at speed")
+                    telemetry.addData("PHASE 4", "SKIP FIRE — wheels never reached %.0f RPM".format(rpm))
+                    telemetry.update()
+                } else {
                 // Fire every held ball: one LOADER stroke per ball, CONFIRMED
                 // by the flywheel RPM dip, wheels re-verified at speed between
                 // balls. The intake does NOT run during fire — the loader
@@ -230,6 +244,7 @@ class BioBuzzAutonomous : LinearOpMode() {
                     }
                 }
                 BlackBox.event("fire_done", "rpm" to rpm, "fired" to fired, "attempted" to collected)
+                }
             } else {
                 telemetry.addData("PHASE 4", "ALIGN FAILED - skipping fire (safe)")
                 telemetry.update()

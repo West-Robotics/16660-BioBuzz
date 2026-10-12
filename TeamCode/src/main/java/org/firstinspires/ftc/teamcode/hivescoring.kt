@@ -173,15 +173,21 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
     private fun clusterToTarget(cluster: AprilTagClusterDetection): HiveTarget? {
         val ftc = cluster.ftcPose ?: return null
         val name = cluster.metadata?.shortName ?: return null
+        // SDK sign convention: ftc.bearing is POSITIVE when the tag is to the
+        // LEFT (positive yaw = CCW to face it). HiveTarget normalizes to
+        // "+ = right of center" so all steering/overlay/world-model math can
+        // use one convention — negate here. (Do NOT remove: every consumer —
+        // rangeCorrection's turn, the overlay, WorldModel — assumes + = right.)
+        val bearingDeg = -ftc.bearing.toDouble()
         // Clusters do not report a screen position — reconstruct an approximate
         // one from the bearing so the preview overlay lands near the hive.
         val screenX = upIntrinsics.centerX +
-            upIntrinsics.focalLengthPx * Math.tan(Math.toRadians(ftc.bearing))
+            upIntrinsics.focalLengthPx * Math.tan(Math.toRadians(bearingDeg))
         return HiveTarget(
             tagId = -1,
             label = name,
             distanceCm = ftc.range * 2.54,
-            bearingDeg = ftc.bearing.toDouble(),
+            bearingDeg = bearingDeg,
             screenX = screenX,
             screenY = upIntrinsics.centerY,
             pixelDiagonal = 0.0,
@@ -201,7 +207,8 @@ class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
                 tagId = tag.id,
                 label = "Tag ${tag.id}",
                 distanceCm = ftc.range * 2.54,
-                bearingDeg = ftc.bearing.toDouble(),
+                // ftc.bearing: + = tag LEFT (SDK) -> negate for "+ = right"
+                bearingDeg = -ftc.bearing.toDouble(),
                 screenX = center.x,
                 screenY = center.y,
                 pixelDiagonal = diag,
@@ -389,7 +396,10 @@ class BallLocator {
      *  can also add detector-only finds). */
     fun visibleTargets(): List<BallTarget> {
         val out = mutableListOf<BallTarget>()
-        for (src in listOf(pollen, nectarBlue, nectarRed, flower)) {
+        // nectarRedWrap must be listed too: it covers the wrapping half of the
+        // red hue band (H 168-180) and shares the "Nectar Red" label — without
+        // it those blobs are processed by the portal but never surfaced.
+        for (src in listOf(pollen, nectarBlue, nectarRed, nectarRedWrap, flower)) {
             val blobs = try {
                 src.proc.blobs.toList()
             } catch (_: Exception) {

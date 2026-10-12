@@ -17,6 +17,7 @@ import org.firstinspires.ftc.vision.VisionProcessor
 import org.json.JSONObject
 import org.opencv.core.Mat
 import org.opencv.imgcodecs.Imgcodecs
+import org.opencv.imgproc.Imgproc
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -200,14 +201,25 @@ class FrameGrabProcessor(private val camera: String) : VisionProcessor {
         if (!BlackBox.frameBudgetAvailable()) return null
 
         lastSaveNanos = captureTimeNanos
+        var bgr: Mat? = null
         return try {
             val name = "frame_%06d.jpg".format(++frameCount)
             val out = File(dir, name)
-            Imgcodecs.imwrite(out.absolutePath, f)
-            BlackBox.noteFrame(camera, name, captureTimeNanos, out.length().toInt())
+            // VisionProcessor frames are 4-channel RGBA; imwrite would treat
+            // them as BGRA and silently save R/B-SWAPPED JPEGs (poisoning the
+            // offline HSV auto-labeling). Convert to BGR first, and only count
+            // the frame against the budget when the write actually succeeded.
+            val bgrMat = Mat()
+            Imgproc.cvtColor(f, bgrMat, Imgproc.COLOR_RGBA2BGR)
+            bgr = bgrMat
+            if (Imgcodecs.imwrite(out.absolutePath, bgrMat)) {
+                BlackBox.noteFrame(camera, name, captureTimeNanos, out.length().toInt())
+            }
             null
         } catch (_: Exception) {
             null
+        } finally {
+            bgr?.release()
         }
     }
 

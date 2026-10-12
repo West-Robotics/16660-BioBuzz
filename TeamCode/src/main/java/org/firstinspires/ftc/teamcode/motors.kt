@@ -23,6 +23,10 @@ import kotlin.math.sin
  * These are STARTING POINTS: tune them live (FTC Dashboard) or edit here if
  * the drivetrain lags or oscillates.
  */
+
+/** Base position-PID kP used by NextFTC position moves; [Drivetrain.setSpeed] scales it. */
+private const val POSITION_KP = 8.0
+
 private fun nextYellowJacket(
     name: String,
     maxRpm: Double,
@@ -41,7 +45,7 @@ private fun nextYellowJacket(
         kS = 0.03                  // static-friction compensation
     }
     positionConstants.apply {
-        kP = 8.0                   // throttle per radian of position error (TUNE)
+        kP = POSITION_KP           // throttle per radian of position error (TUNE)
         kD = 0.0
         kV = 1.0 / maxRadPerSec
     }
@@ -76,13 +80,29 @@ class Drivetrain : Mechanism {
         return ((2.0 * cm / WheelDiameterCm) * WheelGearRatio)
     }
 
-  fun driveForward(cm: Double, speed: Double = 1.0) { // speed in range of 0 to 1, 1 high 0 low
+    /**
+     * Commands each wheel to rotate by the given deltas (radians), measured
+     * FROM ITS CURRENT POSITION. NextFTC position setpoints are ABSOLUTE in
+     * the accumulated-encoder frame — issuing them without the current
+     * position would target "N radians since hub boot", which is only a
+     * relative move on a freshly zeroed encoder and never twice in a row.
+     */
+    private fun moveBy(dFl: Double, dFr: Double, dBl: Double, dBr: Double) {
+        FrontLeft.setPositionSetpoint(FrontLeft.encoderPosition + dFl.radians)
+        FrontRight.setPositionSetpoint(FrontRight.encoderPosition + dFr.radians)
+        BackLeft.setPositionSetpoint(BackLeft.encoderPosition + dBl.radians)
+        BackRight.setPositionSetpoint(BackRight.encoderPosition + dBr.radians)
+    }
+
+    /**
+     * Moves the robot FORWARD [cm] centimeters relative to its current spot
+     * (mecanum forward = all wheels forward). Re-issuing extends the move.
+     * [speed] scales the position controller's kP (see [setSpeed]).
+     */
+    fun driveForward(cm: Double, speed: Double = 1.0) {
         val rad: Double = cmToRad(cm)
         setSpeed(speed)
-        FrontLeft.setPositionSetpoint(rad.radians)
-        FrontRight.setPositionSetpoint(rad.radians)
-        BackLeft.setPositionSetpoint(rad.radians)
-        BackRight.setPositionSetpoint(rad.radians)
+        moveBy(rad, rad, rad, rad)
     }
     fun driveBackward(cm: Double, speed: Double = 1.0) {driveForward(-cm, speed)}
 
@@ -92,20 +112,14 @@ class Drivetrain : Mechanism {
 
         setSpeed(speed)
 
-        FrontLeft.setPositionSetpoint(rad.radians)
-        FrontRight.setPositionSetpoint((-rad).radians)
-        BackLeft.setPositionSetpoint((-rad).radians)
-        BackRight.setPositionSetpoint(rad.radians)
+        moveBy(rad, -rad, -rad, rad)
     }
 
     fun driveLeft(cm: Double, speed: Double = 1.0) {
         val wheelCm = cm * sqrt(2.0)
         val rad = cmToRad(wheelCm)
         setSpeed(speed)
-        FrontLeft.setPositionSetpoint((-rad).radians)
-        FrontRight.setPositionSetpoint(rad.radians)
-        BackLeft.setPositionSetpoint(rad.radians)
-        BackRight.setPositionSetpoint((-rad).radians)
+        moveBy(-rad, rad, rad, -rad)
     }
 
     fun turn(degrees: Double, speed: Double = 1.0) {
@@ -120,14 +134,11 @@ class Drivetrain : Mechanism {
 
         setSpeed(speed)
 
-        FrontLeft.setPositionSetpoint(motorRad.radians)
-        FrontRight.setPositionSetpoint((-motorRad).radians)
-        BackLeft.setPositionSetpoint(motorRad.radians)
-        BackRight.setPositionSetpoint((-motorRad).radians)
+        moveBy(motorRad, -motorRad, motorRad, -motorRad)
     }
 
     /**
-     * Drives the robot at a specific angle relative to its current orientation for a given distance.
+     * Moves the robot at a specific angle relative to its current orientation for a given distance.
      * @param cm The distance to move in centimeters.
      * @param degrees The angle at which to move (0 is forward, 90 is right, 180 is backward, 270 is left).
      * @param speed The speed multiplier (0.0 to 1.0).
@@ -146,10 +157,10 @@ class Drivetrain : Mechanism {
 
         setSpeed(speed)
 
-        FrontLeft.setPositionSetpoint(cmToRad(flWheel).radians)
-        FrontRight.setPositionSetpoint(cmToRad(frWheel).radians)
-        BackLeft.setPositionSetpoint(cmToRad(blWheel).radians)
-        BackRight.setPositionSetpoint(cmToRad(brWheel).radians)
+        moveBy(
+            cmToRad(flWheel), cmToRad(frWheel),
+            cmToRad(blWheel), cmToRad(brWheel),
+        )
     }
 
     fun driveTeleOp(forward: Double, strafe: Double, turn: Double) {
@@ -179,21 +190,40 @@ class Drivetrain : Mechanism {
     }
 
 
+    /**
+     * Speed scale for the NEXT position move (driveForward/turn/driveAtAngle).
+     *
+     * NextFTC position control has no separate target-velocity knob — a
+     * position move's speed comes from the position PID's kP — so "speed"
+     * here scales kP: 1.0 = full gain ([POSITION_KP], the tuned value),
+     * 0.25 = a gentle quarter-gain crawl. Call it BEFORE the move (all move
+     * helpers call it for you). Velocity control ([driveTeleOp]) is unaffected.
+     *
+     * (The old body was commented out, which silently ignored every `speed`
+     * argument in this file — DriveOnly's 0.25 nudge, StrategicController's
+     * 0.5/0.8 approach speeds, Experiment's scripted moves.)
+     */
     fun setSpeed(speed: Double = 1.0) {
-        val velocity = speed.coerceIn(0.0, 1.0) * DRIVE_MOTOR_MAX_RPM
-/**
-        FrontLeft.setVelocitySetpoint(velocity.rpm)
-        FrontRight.setVelocitySetpoint(velocity.rpm)
-        BackLeft.setVelocitySetpoint(velocity.rpm)
-        BackRight.setVelocitySetpoint(velocity.rpm)
-        **/
+        val kp = POSITION_KP * speed.coerceIn(0.0, 1.0)
+        FrontLeft.positionConstants.kP = kp
+        FrontRight.positionConstants.kP = kp
+        BackLeft.positionConstants.kP = kp
+        BackRight.positionConstants.kP = kp
     }
 
 
+    /**
+     * Actually stops the drivetrain: switches every motor from position
+     * control to a zero-velocity command (the setpoint persists otherwise —
+     * the robot would keep driving to its last position target).
+     */
     fun flushMotors(noCapSpeed: Boolean = true) {
-        if (noCapSpeed) setSpeed(0.0)
-
-
+        if (noCapSpeed) {
+            FrontLeft.setVelocitySetpoint(0.0.rpm)
+            FrontRight.setVelocitySetpoint(0.0.rpm)
+            BackLeft.setVelocitySetpoint(0.0.rpm)
+            BackRight.setVelocitySetpoint(0.0.rpm)
+        }
     }
 }
 class Intake(private val hasMotor: Boolean = true) : Mechanism {
@@ -304,6 +334,19 @@ class FlyWheel(
 
     /** Measured RIGHT wheel speed from the encoder, RPM (0.0 when absent). */
     fun measuredRightRpm(): Double = flyWheelRight?.encoderVelocity?.into(RotationsPerMinute) ?: 0.0
+
+    /**
+     * Average measured speed across the wheels that EXIST, RPM (0.0 with no
+     * wheels). Averaging both raw readings counts a missing wheel as 0 and
+     * silently halves every RPM/dip threshold on a bench robot.
+     */
+    fun measuredAverageRpm(): Double {
+        val speeds = listOfNotNull(
+            flyWheelLeft?.encoderVelocity?.into(RotationsPerMinute),
+            flyWheelRight?.encoderVelocity?.into(RotationsPerMinute),
+        )
+        return if (speeds.isEmpty()) 0.0 else speeds.average()
+    }
 
     /**
      * True when every EXISTING wheel is within [toleranceRpm] of [targetRpm].
@@ -460,9 +503,9 @@ class ShotDetector(private val flywheel: FlyWheel) {
     private var windowEndNanos = 0L
     private var confirmedCount = 0
 
-    /** Average measured wheel speed (both wheels), RPM; 0.0 if hardware is gone. */
+    /** Average measured speed of the wheels that exist, RPM; 0.0 if hardware is gone. */
     fun measuredRpm(): Double = try {
-        (flywheel.measuredLeftRpm() + flywheel.measuredRightRpm()) / 2.0
+        flywheel.measuredAverageRpm()
     } catch (_: Exception) {
         0.0
     }

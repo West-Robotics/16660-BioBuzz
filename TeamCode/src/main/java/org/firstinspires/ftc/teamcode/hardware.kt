@@ -135,6 +135,12 @@ object HardwareProbe {
  * then retry. After INTAKE_MAX_COUGHS_PER_JAM coughs, declares JAMMED so the
  * caller can skip that pickup and move on instead of burning the whole match
  * on one stuck ball.
+ *
+ * OWNERSHIP: the guard OWNS the intake motor — while the caller reports
+ * spinning=true the intake is driven at FULL speed (1.0), and when spinning
+ * goes false the intake is zeroed here. This is also the reset path: call
+ * update(spinning=false) at least once after a JAM (SelfPlay does this in
+ * every non-collect action) or the guard stays jammed for the rest of the match.
  */
 class IntakeJamGuard(private val intake: Intake) {
 
@@ -163,7 +169,7 @@ class IntakeJamGuard(private val intake: Intake) {
                 if (!spinning) {
                     jamSinceNanos = 0L
                     coughsThisJam = 0
-                    intake.spinUp(1.0.takeIf { spinning } ?: 0.0)
+                    intake.spinUp(0.0) // not wanted: zero the persistent setpoint
                     return State.NORMAL
                 }
                 intake.spinUp(1.0)

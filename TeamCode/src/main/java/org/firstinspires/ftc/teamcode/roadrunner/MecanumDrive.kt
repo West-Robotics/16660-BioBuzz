@@ -53,6 +53,7 @@ import org.firstinspires.ftc.teamcode.roadrunner.messages.MecanumCommandMessage
 import org.firstinspires.ftc.teamcode.roadrunner.messages.MecanumLocalizerInputsMessage
 import org.firstinspires.ftc.teamcode.roadrunner.messages.PoseMessage
 import java.util.LinkedList
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 
@@ -316,9 +317,12 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
             PoseVelocity2dDual.constant<Time>(powers, 1),
         )
 
+        // Normalize by MAGNITUDE (the quickstart's Math.abs): without abs,
+        // negative wheel powers beyond -1 never scale the others down, and the
+        // SDK's clip destroys the wheel ratios for mixed-sign commands.
         var maxPowerMag = 1.0
         for (power in wheelVels.all()) {
-            maxPowerMag = max(maxPowerMag, power.value())
+            maxPowerMag = max(maxPowerMag, abs(power.value()))
         }
 
         leftFront.power = wheelVels.leftFront[0] / maxPowerMag

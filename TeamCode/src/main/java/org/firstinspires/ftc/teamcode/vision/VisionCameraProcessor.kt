@@ -97,7 +97,9 @@ class VisionCameraProcessor(private val cameraId: CameraId) : VisionProcessor {
                 inlierIndices = IntArray(0), inlierRatio = 0.0,
             )
         }
-        tracker.applyRansacResult(ransac.inlierIndices)
+        // inlier indices refer to the correspondence arrays — pass the map
+        // back to the tracker so classifications land on the right tracks.
+        tracker.applyRansacResult(ransac.inlierIndices, result.trackIndices)
 
         // ---- Robot-frame relative motion ----
         val motion = motionEstimator.imageMotionToRobot(ransac, captureTimeNanos)

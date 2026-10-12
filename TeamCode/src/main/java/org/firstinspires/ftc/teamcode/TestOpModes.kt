@@ -45,6 +45,7 @@ class VisionTestOpMode : LinearOpMode() {
 
     private var selectedParam = 0 // 0: Hmin, 1: Hmax, 2: Smin, 3: Smax, 4: Vmin, 5: Vmax
     private var calibrationEnabled = false
+    private var prevA = false // edge-detect the A toggle (hold = one toggle, not a machine gun)
 
     override fun runOpMode() {
         val visionSystem = VisionSystem(hardwareMap)
@@ -92,19 +93,19 @@ class VisionTestOpMode : LinearOpMode() {
                 updateParam(delta)
             }
 
-            // Calibration Mode Toggle
-            if (gamepad1.a) {
+            // Calibration Mode Toggle (edge-detected: holding A flips once)
+            if (gamepad1.a && !prevA) {
                 calibrationEnabled = !calibrationEnabled
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.calibrationProcessor, calibrationEnabled)
-                
+
                 // Disable production locators when calibrating
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.pollenLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.nectarBlueLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.nectarRedLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.nectarRedWrapLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.flowerLocator, !calibrationEnabled)
-                sleep(200)
             }
+            prevA = gamepad1.a
 
             // Update Calibration Processor
             if (calibrationEnabled) {
@@ -575,6 +576,7 @@ class FlywheelCalibration : LinearOpMode() {
                 telemetry.addLine("Calibration needs at least one flywheel motor + the loader servo.")
                 telemetry.addData("Missing", hw.missingList.joinToString(", "))
                 telemetry.update()
+                sleep(50) // don't busy-spin a core during INIT
             }
             return
         }
@@ -702,6 +704,7 @@ class DriveOnlyOpMode : LinearOpMode() {
                 telemetry.addLine("!! DRIVE MOTORS NOT DETECTED !!")
                 telemetry.addLine("Check the Driver Station configuration.")
                 telemetry.update()
+                sleep(50) // don't busy-spin a core during INIT
             }
             return
         }
@@ -790,6 +793,7 @@ class NnTestOpMode : LinearOpMode() {
                 telemetry.addLine("Neural Net Test needs both cameras — nothing to test.")
                 telemetry.addData("Missing", hw.missingList.joinToString(", "))
                 telemetry.update()
+                sleep(50) // don't busy-spin a core during INIT
             }
             return
         }
@@ -863,8 +867,7 @@ class NnTestOpMode : LinearOpMode() {
 // robot). Every OpMode now constructs exactly what its HardwareProbe says
 // exists — see hardware.kt (HardwareProbe).
 // ============================================================================
-
-
+@TeleOp(name = "Experiment (test bench)", group = "Test")
 class Experiment : LinearOpMode() {
     override fun runOpMode() { // setup, code runs once
         // boot probe: no drive motors configured -> nothing to run
@@ -874,6 +877,7 @@ class Experiment : LinearOpMode() {
                 telemetry.addLine("!! DRIVE MOTORS NOT DETECTED !!")
                 telemetry.addLine("Check the Driver Station configuration.")
                 telemetry.update()
+                sleep(50)
             }
             return
         }
@@ -882,6 +886,12 @@ class Experiment : LinearOpMode() {
         val drivetrain = Drivetrain()
         val teleOp = CustomTeleOp(drivetrain)
         val loader = Loader().also { it.home() }
+
+        telemetry.addLine("EXPERIMENT: waits for START, then runs the drive sequence.")
+        telemetry.update()
+        // Never move during INIT — the sequence only runs once the match/driver
+        // has actually started the OpMode.
+        waitForStart()
 
         drivetrain.driveForward(10.0)
         sleep(5000)
@@ -901,27 +911,20 @@ class Experiment : LinearOpMode() {
         drivetrain.flushMotors()
 
         while (opModeIsActive()) { // main loop
-            teleOp.refresh(controller)
+            // Use THIS OpMode's gamepad1: the old global `controller` captured
+            // BlocksOpModeCompanion.gamepad1 at class-load time, which is only
+            // ever populated by the Blocks runtime and never updates for a
+            // Kotlin OpMode (null -> guaranteed NPE, or a dead stale object).
+            teleOp.refresh(gamepad1)
 
             // Shooter/loader test bench: X (hold) indexes one ball per stroke
             // into the (possibly spinning) flywheel, Y (tap) homes the loader.
-            if (controller.x) loader.stroke()
-            if (controller.y) loader.home()
+            if (gamepad1.x) loader.stroke()
+            if (gamepad1.y) loader.home()
             telemetry.addData("LOADER", "phase %s, %d strokes".format(loader.phase.name, loader.strokeCount))
             telemetry.update()
-
-
-
         }
-
-
-
     }
-
-
-
-
-
 }
 /**
  * Minimal gamepad-to-drivetrain adapter used by the [Experiment] OpMode
