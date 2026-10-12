@@ -44,6 +44,7 @@ class VisionTestOpMode : LinearOpMode() {
 
     private var selectedParam = 0 // 0: Hmin, 1: Hmax, 2: Smin, 3: Smax, 4: Vmin, 5: Vmax
     private var calibrationEnabled = false
+    private var prevA = false // edge-detect the A toggle (hold = one toggle, not a machine gun)
 
     override fun runOpMode() {
         val visionSystem = VisionSystem(hardwareMap)
@@ -91,19 +92,19 @@ class VisionTestOpMode : LinearOpMode() {
                 updateParam(delta)
             }
 
-            // Calibration Mode Toggle
-            if (gamepad1.a) {
+            // Calibration Mode Toggle (edge-detected: holding A flips once)
+            if (gamepad1.a && !prevA) {
                 calibrationEnabled = !calibrationEnabled
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.calibrationProcessor, calibrationEnabled)
-                
+
                 // Disable production locators when calibrating
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.pollenLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.nectarBlueLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.nectarRedLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.nectarRedWrapLocator, !calibrationEnabled)
                 visionSystem.groundPortal.setProcessorEnabled(visionSystem.flowerLocator, !calibrationEnabled)
-                sleep(200)
             }
+            prevA = gamepad1.a
 
             // Update Calibration Processor
             if (calibrationEnabled) {
@@ -187,7 +188,10 @@ class PathfindingTestOpMode : LinearOpMode() {
 
     override fun runOpMode() {
         val visionSystem = VisionSystem(hardwareMap)
-        val strategy = StrategicController(visionSystem, drivetrain)
+        // Inject locally-constructed hardware (no top-level singletons — see
+        // the note in main.kt; the old code passed a global `drivetrain` that
+        // crashed the app at class-load if drive motors weren't configured).
+        val strategy = StrategicController(visionSystem, Drivetrain(), FlyWheel())
 
         telemetry.addData("Status", "Ready")
         telemetry.addLine("DPAD Up/Right/Left: Add Pollen/Nectar/Unknown ball")

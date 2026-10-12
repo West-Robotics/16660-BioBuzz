@@ -267,8 +267,22 @@ class VisualMotionEstimator(private val calibration: CameraCalibration) {
         // The scene appears to move OPPOSITE to the camera:
         //   scene image motion (sxPx, syPx) = -camera motion * f / depth
         // Image axes: +x right, +y DOWN (OpenCV).
-        val cameraRightCm = -ransac.txPx * depthCm / fx
-        val cameraDownCm = -ransac.tyPx * depthCm / fx
+        //
+        // The RANSAC fit is a similarity about the IMAGE ORIGIN, so its raw
+        // (tx, ty) includes the rotation's lever arm about (0,0): pure yaw
+        // would masquerade as phantom translation of ~|principalPoint| * theta
+        // pixels. Re-reference the motion to the PRINCIPAL POINT — the one
+        // image point where pure rotation about the optical axis produces no
+        // translation — before the depth conversion.
+        val cx = calibration.intrinsics.centerX
+        val cy = calibration.intrinsics.centerY
+        val s = ransac.scale
+        val cosT = cos(ransac.thetaRad)
+        val sinT = sin(ransac.thetaRad)
+        val sceneMxPx = (s * (cosT * cx - sinT * cy) + ransac.txPx) - cx
+        val sceneMyPx = (s * (sinT * cx + cosT * cy) + ransac.tyPx) - cy
+        val cameraRightCm = -sceneMxPx * depthCm / fx
+        val cameraDownCm = -sceneMyPx * depthCm / fx
 
         // ---- Rotate the camera-plane motion into the robot frame ----
         // imageToRobotYawDeg (MEASURE, Test 3) is the robot-frame direction

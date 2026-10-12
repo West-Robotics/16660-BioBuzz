@@ -54,6 +54,7 @@ class FlywheelCalibration : LinearOpMode() {
             telemetry.addData("RPM now", String.format(Locale.US, "%.0f", rpmSteps[stepIdx]))
             telemetry.addData("Curve", ShooterModel.summary())
             telemetry.update()
+            sleep(50) // don't busy-spin a core during INIT
         }
 
         while (opModeIsActive()) {

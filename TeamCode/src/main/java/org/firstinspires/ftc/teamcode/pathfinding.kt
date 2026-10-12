@@ -9,7 +9,11 @@ import kotlin.math.hypot
  * It maintains a map of the field, prioritizes balls, and decides when to switch
  * from collecting to scoring based on game logic and efficiency heuristics.
  */
-class StrategicController(private val vision: VisionSystem, private val drivetrain: Drivetrain) {
+class StrategicController(
+    private val vision: VisionSystem,
+    private val drivetrain: Drivetrain,
+    private val flywheel: FlyWheel,
+) {
 
     // 1. STATE
     private var pollenCount = 0
@@ -100,7 +104,8 @@ class StrategicController(private val vision: VisionSystem, private val drivetra
      * Preemptive flywheel spin-up. If we can see the hive, pre-spin to the RPM
      * the calibrated curve says our current distance needs; otherwise hold
      * the wheels at the PRIME speed so a later real spin-up is just a short
-     * hop. (The global `flywheel` singleton lives in main.kt.)
+     * hop. (The flywheel is injected by the constructing OpMode — there are no
+     * hardware singletons anymore; see the note in main.kt.)
      */
     private fun requestFlywheelSpinup() {
         val dist = hivePosition?.let { hypot(it.first, it.second) }

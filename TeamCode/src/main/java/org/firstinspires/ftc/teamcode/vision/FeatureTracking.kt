@@ -119,7 +119,13 @@ class OpticalFlowTracker(
 
     /**
      * Compact per-frame tracking result handed to RANSAC and the snapshot
-     * builder. Index space matches the tracker's internal track list.
+     * builder. [prevXy]/[curXy] contain ONLY tracks that were actually LK-
+     * tracked this frame (freshly reacquired tracks are excluded — their
+     * prev==cur pair is an artifact, not a measurement, and a pile of
+     * zero-motion correspondences biases the RANSAC consensus toward "no
+     * motion"). [trackIndices] maps each correspondence-array index to its
+     * index in the tracker's track list so inlier classifications can be
+     * applied to the right [Track]s.
      */
     data class FrameResult(
         val prevXy: DoubleArray,
@@ -127,6 +133,7 @@ class OpticalFlowTracker(
         val trackedCount: Int,
         val meanErrorPx: Double,
         val detectionsThisFrame: Int,
+        val trackIndices: IntArray = IntArray(0),
     )
 
     /**
@@ -205,30 +212,46 @@ class OpticalFlowTracker(
         }
 
         // ---- 3. Build correspondence arrays for RANSAC ----
-        val n = tracks.size
-        val prevXy = DoubleArray(2 * n)
-        val curXy = DoubleArray(2 * n)
-        for (i in 0 until n) {
-            prevXy[2 * i] = tracks[i].prevX
-            prevXy[2 * i + 1] = tracks[i].prevY
-            curXy[2 * i] = tracks[i].x
-            curXy[2 * i + 1] = tracks[i].y
+        // Skip isNew tracks: they were reacquired this frame and carry no
+        // prev->cur measurement (prev == cur). Feeding them in would add
+        // zero-motion "votes" that a no-motion RANSAC hypothesis trivially
+        // accepts, skewing the scene-motion estimate toward zero.
+        val n = tracks.size // total live tracks (confidence uses this)
+        val prevXy = ArrayList<Double>(tracks.size * 2)
+        val curXy = ArrayList<Double>(tracks.size * 2)
+        val trackIndices = ArrayList<Int>(tracks.size)
+        for (i in tracks.indices) {
+            val t = tracks[i]
+            if (t.isNew) continue
+            trackIndices.add(i)
+            prevXy.add(t.prevX)
+            prevXy.add(t.prevY)
+            curXy.add(t.x)
+            curXy.add(t.y)
         }
 
         prevGray?.release()
         prevGray = gray.clone()
 
         return FrameResult(
-            prevXy, curXy,
+            prevXy.toDoubleArray(), curXy.toDoubleArray(),
             trackedCount = n,
             meanErrorPx = if (errorCount > 0) errorSum / errorCount else 0.0,
             detectionsThisFrame = detections,
+            trackIndices = trackIndices.toIntArray(),
         )
     }
 
-    /** Marks which tracks the RANSAC considered part of the static scene. */
-    fun applyRansacResult(inlierIndices: IntArray) {
-        val inliers = inlierIndices.toHashSet()
+    /**
+     * Marks which tracks the RANSAC considered part of the static scene.
+     * [inlierIndices] index the CORRESPONDENCE arrays; [trackIndices] (from
+     * the same [FrameResult]) map them back onto track-list positions.
+     */
+    fun applyRansacResult(inlierIndices: IntArray, trackIndices: IntArray) {
+        val inliers = HashSet<Int>()
+        for (k in inlierIndices) {
+            trackIndices.getOrNull(k)?.let { inliers.add(it) }
+        }
         for (i in tracks.indices) {
             val t = tracks[i]
             t.isStaticInlier = i in inliers

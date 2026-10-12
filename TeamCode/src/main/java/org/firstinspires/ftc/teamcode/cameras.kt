@@ -126,7 +126,9 @@ class VisionSystem(hardwareMap: HardwareMap) {
                         Detection(
                             label = "Hive Cluster ${tag.metadata.shortName}",
                             distanceMm = ftc.range * 25.4,
-                            angleDegrees = ftc.bearing,
+                            // SDK ftc.bearing is + = LEFT; normalize to + = right
+                            // to match the blob detections' angle convention.
+                            angleDegrees = -ftc.bearing,
                             xMm = ftc.x * 25.4,
                             yMm = ftc.y * 25.4,
                             zMm = ftc.z * 25.4,
@@ -142,7 +144,9 @@ class VisionSystem(hardwareMap: HardwareMap) {
                         Detection(
                             label = "Hive Tag ${tag.id}",
                             distanceMm = tag.ftcPose.range * 25.4,
-                            angleDegrees = tag.ftcPose.bearing,
+                            // SDK ftc.bearing is + = LEFT; normalize to + = right
+                            // to match the blob detections' angle convention.
+                            angleDegrees = -tag.ftcPose.bearing,
                             xMm = tag.ftcPose.x * 25.4,
                             yMm = tag.ftcPose.y * 25.4,
                             zMm = tag.ftcPose.z * 25.4,

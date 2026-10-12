@@ -1,14 +1,9 @@
 // i am used to in c++, where it is best practice to have all global variables in one file,
 // so they are all easy to change and modify
 package org.firstinspires.ftc.teamcode
-import com.qualcomm.robotcore.hardware.Gamepad
-import org.firstinspires.ftc.robotcore.external.BlocksOpModeCompanion.gamepad1
-import org.firstinspires.ftc.robotcore.external.BlocksOpModeCompanion.gamepad2
 import org.firstinspires.ftc.vision.opencv.ColorRange
 import org.firstinspires.ftc.vision.opencv.ColorSpace
 import org.opencv.core.Scalar
-
-val controller: Gamepad = gamepad1
 
 var DEBUG_MODE = true
 
@@ -24,7 +19,11 @@ const val IntakeGearRatio = 1.0
 
 const val WheelDiameterCm = 5.0
 const val WheelGearRatio = 1.0
+// MEASURE: distance between front and rear axle centers. The 87.0 default is a
+// PLACEHOLDER larger than any legal FTC robot — an unmeasured value makes
+// Drivetrain.turn() overshoot by (real/measured) turns.
 const val WheelBaseCm: Double = 87.0
+// MEASURE: distance between left and right wheel contact points (same caveat).
 const val TrackWidthCm: Double = 87.0
 
 // ================== MOTOR SPECS (goBILDA 5203-series Yellow Jackets) ==================
@@ -119,10 +118,13 @@ const val FLOWER_SETTLE_AFTER_PULL_MS = 600L // intake time to swallow the relea
  * final design (servo sweep, arm motion, winch, etc.). It runs ONCE per
  * flower stop, on the OpMode thread, so Thread.sleep / blocking waits are OK.
  *
+ * The active OpMode passes in its OWN Intake instance (there are no hardware
+ * singletons anymore — see the note in main.kt).
+ *
  * Default placeholder: reverse-pulse the intake (assumes pulling = backing
  * the ball out with the intake until a real mechanism exists).
  */
-var flowerPullRoutine: () -> Unit = {
+var flowerPullRoutine: (Intake) -> Unit = { intake ->
     intake.spinUp(-1.0)
     try {
         Thread.sleep(1000)

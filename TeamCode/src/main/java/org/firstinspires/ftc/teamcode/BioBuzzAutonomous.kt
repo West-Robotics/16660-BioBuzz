@@ -99,6 +99,10 @@ class BioBuzzAutonomous : LinearOpMode() {
             )
             telemetry.addData("ALLIANCE", SELECTED_TEAM.name)
             telemetry.addLine("Select with D-pad: LEFT = RED, RIGHT = BLUE")
+            if (MecanumDrive.PARAMS.kV == 0.0 || MecanumDrive.PARAMS.axialGain == 0.0) {
+                telemetry.addLine("!! RR UNTUNED (MecanumDrive.PARAMS are zeros) !!")
+                telemetry.addLine("-> trajectory moves (e.g. PHASE 5 park) will NOT drive the robot")
+            }
             telemetry.update()
         }
 
@@ -152,12 +156,19 @@ class BioBuzzAutonomous : LinearOpMode() {
                     telemetry.update()
                 }
 
-                // Feed every held ball through the at-speed flywheel.
-                telemetry.addData("PHASE 4", "FIRING at %.0f RPM".format(rpm))
-                telemetry.update()
-                intake.spinUp(1.0)
-                sleep(HiveScoringConfig.FIRE_TIME_MS.toLong())
-                intake.stop()
+                if (!flywheel.isAtSpeed(rpm)) {
+                    // Never feed balls into slow wheels: that's a weak shot
+                    // (and a possible stuck ball). Safe-skip instead.
+                    telemetry.addData("PHASE 4", "SKIP FIRE — wheels never reached %.0f RPM".format(rpm))
+                    telemetry.update()
+                } else {
+                    // Feed every held ball through the at-speed flywheel.
+                    telemetry.addData("PHASE 4", "FIRING at %.0f RPM".format(rpm))
+                    telemetry.update()
+                    intake.spinUp(1.0)
+                    sleep(HiveScoringConfig.FIRE_TIME_MS.toLong())
+                    intake.stop()
+                }
             } else {
                 telemetry.addData("PHASE 4", "ALIGN FAILED - skipping fire (safe)")
                 telemetry.update()
@@ -329,7 +340,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         if (!positioned) return false
 
         // ==== CUSTOMIZABLE PULL-OUT — edit flowerPullRoutine in globals.kt ====
-        flowerPullRoutine()
+        flowerPullRoutine(intake)
 
         // Give the released ball time to settle into the intake.
         intake.spinUp(1.0)

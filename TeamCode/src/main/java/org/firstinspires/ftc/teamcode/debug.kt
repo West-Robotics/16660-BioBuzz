@@ -75,14 +75,19 @@ class CalibrationProcessor : VisionProcessor {
 
     override fun processFrame(frame: Mat, captureTimeNanos: Long): Any? {
         if (!DEBUG_MODE) return null
-        
+
         Imgproc.cvtColor(frame, hsv, Imgproc.COLOR_RGB2HSV)
         Core.inRange(hsv, min, max, mask)
-        
+
         contours.clear()
         Imgproc.findContours(mask, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
-        
-        return contours.map { Imgproc.boundingRect(it) }
+
+        val rects = contours.map { Imgproc.boundingRect(it) }
+        // findContours allocates a native Mat per contour — release them or
+        // the native heap slowly drains while calibration mode is enabled.
+        for (c in contours) c.release()
+        contours.clear()
+        return rects
     }
 
     override fun onDrawFrame(
