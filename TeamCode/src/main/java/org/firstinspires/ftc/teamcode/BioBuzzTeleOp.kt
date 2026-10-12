@@ -2,10 +2,6 @@ package org.firstinspires.ftc.teamcode
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
-import org.firstinspires.ftc.teamcode.blackbox.BlackBox
-import org.firstinspires.ftc.teamcode.blackbox.FrameGrabProcessor
-import org.firstinspires.ftc.teamcode.nn.DetectorProcessor
-import org.firstinspires.ftc.teamcode.nn.ShotPredictor
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
 

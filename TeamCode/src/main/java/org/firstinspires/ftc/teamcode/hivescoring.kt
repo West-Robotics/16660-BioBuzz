@@ -5,7 +5,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import org.firstinspires.ftc.robotcore.external.Telemetry
 import org.firstinspires.ftc.robotcore.internal.camera.calibration.CameraCalibration
-import org.firstinspires.ftc.teamcode.nn.NeuralReferee
 import org.firstinspires.ftc.teamcode.vision.CameraId
 import org.firstinspires.ftc.teamcode.vision.VisionConfig
 import org.firstinspires.ftc.vision.VisionProcessor

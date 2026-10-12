@@ -2,7 +2,7 @@
 """
 Black Box dataset builder — turns a recorded match into a computer-friendly dataset.
 
-The robot's Black Box (TeamCode/.../blackbox/BlackBox.kt) records every match
+The robot's Black Box (TeamCode/.../blackbox.kt) records every match
 as a session folder on the Robot Controller:
 
     blackbox/<label>_<timestamp>/

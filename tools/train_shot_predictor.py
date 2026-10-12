@@ -2,7 +2,7 @@
 """
 Shot-outcome predictor trainer — neural net stage B.
 
-Trains the tiny MLP the robot's ShotPredictor.kt runs in pure Kotlin:
+Trains the tiny MLP the robot's ShotPredictor (neural.kt) runs in pure Kotlin:
 P(shot scores) from (distance, RPM, battery voltage). Data comes from your
 Black Box sessions: every `fire_start` -> `shot_confirmed/shot_missed` pair
 with a live hive distance is one labeled sample. The trained weights export

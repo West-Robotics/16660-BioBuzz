@@ -123,7 +123,7 @@ const val SHOT_PREDICTOR_FILE = "nn/shot_predictor.json"
 // Controller's storage for post-match analysis on a computer. Fully passive:
 // it never affects robot control, never transmits anything during a match,
 // and only uses the two already-legal USB webcams. See docs/LEGALITY-REVIEW.md
-// and blackbox/BlackBox.kt before using in official play.
+// and blackbox.kt before using in official play.
 const val BLACKBOX_ENABLED = true          // master switch
 const val BLACKBOX_FRAME_CAPTURE_FPS = 5.0 // JPEG frames/sec saved PER camera
 const val BLACKBOX_MAX_SESSION_MB = 400.0   // storage budget per OpMode run
@@ -207,7 +207,7 @@ const val FLOWER_SETTLE_AFTER_PULL_MS = 600L // intake time to swallow the relea
  * flower stop, on the OpMode thread, so Thread.sleep / blocking waits are OK.
  *
  * The active OpMode passes in its own Intake/Loader instances (there are no
- * hardware singletons anymore — see main.kt).
+ * hardware singletons anymore — see the note in TestOpModes.kt).
  *
  * Default placeholder: reverse-pulse the intake (assumes pulling = backing
  * the ball out with the intake until a real mechanism exists).

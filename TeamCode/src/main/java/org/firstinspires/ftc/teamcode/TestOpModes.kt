@@ -1,6 +1,7 @@
 package org.firstinspires.ftc.teamcode
 
 import android.util.Size
+import com.qualcomm.robotcore.hardware.Gamepad
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName
@@ -510,5 +511,436 @@ class CameraCalibrationOpMode : LinearOpMode() {
             "%s\nfocal ~%.0f px (cfg %.0f)\ntag w=%.0fpx",
             name, m.focalPx, configuredFocal, m.widthPx,
         )
+    }
+}
+
+// ============================================================================
+// ============ Flywheel Calibration (was FlywheelCalibration.kt) ============
+// ============================================================================
+
+
+/**
+ * ============ FLYWHEEL CALIBRATION — measure the shooter curve ============
+ *
+ * Walks the dual flywheel through 6000/5000/4000/3000/2000/1000 RPM while you
+ * film each shot with a camera (a phone is fine). Then run
+ * tools/flywheel_analyzer.py on the video — it tracks the ball automatically
+ * and prints the measured landing distance for each RPM, formatted ready to
+ * paste into globals.kt.
+ *
+ * HOW TO USE (full walkthrough in tools/README.md):
+ *  1. Aim the robot straight down a clear runway. Put the camera SIDE-ON to
+ *     the ball's flight path, and lay two tape marks on the floor a known
+ *     distance apart (the analyzer uses them to convert pixels -> cm).
+ *  2. Load a ball, run this OpMode, pick the RPM step (dpad UP/DOWN).
+ *  3. Press A to spin the flywheel up; wait until telemetry says AT SPEED.
+ *  4. Press X to FIRE ONE ball through the loader; film where it lands.
+ *  5. Repeat for every RPM step (shoot in the SAME order as
+ *     SHOOTER_CALIBRATION_RPM: 6000 down to 1000), then run the analyzer.
+ *
+ * Every shot is confirmed by the flywheel RPM dip and written to the Black
+ * Box — those records are what tools/shooter_refit.py uses to keep refining
+ * the shooter curve from real matches.
+ */
+@TeleOp(name = "Flywheel Calibration", group = "Test")
+class FlywheelCalibration : LinearOpMode() {
+
+    private val rpmSteps = SHOOTER_CALIBRATION_RPM.toList()
+    private var stepIdx = 0
+    private var fineRpm = 0.0
+    private var spinning = false
+
+    private lateinit var flywheel: FlyWheel
+    private val loader = Loader()
+
+    // Edge-detection memory so one button press = exactly one action.
+    private var lastDpadUp = false
+    private var lastDpadDown = false
+    private var lastDpadLeft = false
+    private var lastDpadRight = false
+    private var lastA = false
+    private var lastB = false
+    private var lastX = false
+
+    private fun commandedRpm(): Double =
+        (rpmSteps[stepIdx] + fineRpm).coerceIn(0.0, FLYWHEEL_MOTOR_MAX_RPM)
+
+    override fun runOpMode() {
+        // boot probe: this OpMode exists to test the shooter + loader — a
+        // single flywheel motor is enough for bench testing.
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.anyFlywheel || !hw.loaderServo) {
+            while (!isStopRequested) {
+                telemetry.addLine("!! SHOOTER HARDWARE NOT DETECTED !!")
+                telemetry.addLine("Calibration needs at least one flywheel motor + the loader servo.")
+                telemetry.addData("Missing", hw.missingList.joinToString(", "))
+                telemetry.update()
+            }
+            return
+        }
+
+        BlackBox.start(hardwareMap.appContext, "calib")
+        hw.logToBlackBox()
+        flywheel = FlyWheel(hasLeft = hw.flywheelLeft, hasRight = hw.flywheelRight)
+        loader.home()
+        while (!isStarted && !isStopRequested) {
+            telemetry.addLine("FLYWHEEL CALIBRATION (${rpmSteps.size} RPM steps)")
+            telemetry.addLine("DPAD UP/DOWN: pick RPM step   DPAD LEFT/RIGHT: fine +/-25")
+            telemetry.addLine("A: toggle spin   B: stop   X: FIRE one ball (loader)")
+            telemetry.addData("RPM now", String.format(Locale.US, "%.0f", rpmSteps[stepIdx]))
+            telemetry.addData("Curve", ShooterModel.summary())
+            telemetry.update()
+        }
+
+        while (opModeIsActive()) {
+            if (gamepad1.dpad_up && !lastDpadUp && stepIdx < rpmSteps.size - 1) {
+                stepIdx++; fineRpm = 0.0
+            }
+            if (gamepad1.dpad_down && !lastDpadDown && stepIdx > 0) {
+                stepIdx--; fineRpm = 0.0
+            }
+            if (gamepad1.dpad_right && !lastDpadRight) fineRpm += 25.0
+            if (gamepad1.dpad_left && !lastDpadLeft) fineRpm -= 25.0
+            if (gamepad1.a && !lastA) spinning = !spinning
+            if (gamepad1.b && !lastB) spinning = false
+
+            val rpm = commandedRpm()
+            if (spinning) flywheel.spinToRpm(rpm) else flywheel.stop()
+
+            // Fire exactly one ball: a single loader stroke, CONFIRMED by the
+            // flywheel RPM dip, then logged — these records are the raw data
+            // for the shooter curve (tools/shooter_refit.py + video analyzer).
+            if (gamepad1.x && !lastX && spinning && !loader.busy &&
+                loader.phase == LoaderPhase.HOME
+            ) {
+                loader.stroke()
+                while (opModeIsActive() && loader.busy) {
+                    telemetry.addData("LOADER", "stroking...")
+                    telemetry.update()
+                }
+                val detector = ShotDetector(flywheel)
+                detector.arm()
+                while (opModeIsActive() && detector.update() == ShotDetector.State.ARMED) {
+                    telemetry.addData(
+                        "SHOT WATCH",
+                        "%.0f RPM (need a %.0f RPM dip)".format(
+                            detector.measuredRpm(), SHOT_DIP_THRESHOLD_RPM,
+                        ),
+                    )
+                    telemetry.update()
+                }
+                loader.retract()
+                BlackBox.event(
+                    "calibration_shot",
+                    "commandedRpm" to rpm,
+                    "dipRpm" to detector.lastDipRpm,
+                    "result" to detector.state.name,
+                )
+            }
+
+            telemetry.addData("Commanded", String.format(Locale.US, "%.0f RPM", rpm))
+            telemetry.addData(
+                "Measured L/R",
+                String.format(Locale.US, "%.0f / %.0f RPM", flywheel.measuredLeftRpm(), flywheel.measuredRightRpm()),
+            )
+            telemetry.addData("AT SPEED", flywheel.isAtSpeed(rpm))
+            telemetry.addData(
+                "Step", "%d/%d (fine %+.0f)".format(stepIdx + 1, rpmSteps.size, fineRpm),
+            )
+            telemetry.addLine(
+                "FILM THIS SHOT, then note: " +
+                    String.format(Locale.US, "%.0f", rpm) + " RPM -> ? cm",
+            )
+            telemetry.update()
+
+            lastDpadUp = gamepad1.dpad_up
+            lastDpadDown = gamepad1.dpad_down
+            lastDpadLeft = gamepad1.dpad_left
+            lastDpadRight = gamepad1.dpad_right
+            lastA = gamepad1.a
+            lastB = gamepad1.b
+            lastX = gamepad1.x
+        }
+
+        flywheel.stop(breakMotor = true)
+        loader.home()
+        BlackBox.stop()
+    }
+}
+
+// ============================================================================
+// ============ Drive Only — hub + motors bring-up (was DriveOnlyOpMode.kt) ============
+// ============================================================================
+
+
+/**
+ * ============ DRIVE ONLY — the minimal bring-up OpMode ============
+ *
+ * Runs on NOTHING but the Robot Controller (hub) + the 4 drive motors:
+ * no cameras, no IMU, no servos, no Road Runner, no vision — nothing that
+ * needs extra configured hardware. This is the first thing to run when the
+ * robot is freshly wired, and the fastest loop to verify motor wiring,
+ * direction and encoder sign.
+ *
+ * Controls:
+ *   LEFT STICK drive / RIGHT STICK turn   (mecanum, same math as teleop)
+ *   LEFT BUMPER (hold)   slow mode (30% power)
+ *   dpad UP/DOWN         nudge forward/back a few cm (encoder position moves)
+ *
+ * Telemetry shows live wheel positions + velocities so you can confirm each
+ * motor spins the right way and its encoder counts up.
+ */
+@TeleOp(name = "Drive Only (hub + motors)", group = "Test")
+class DriveOnlyOpMode : LinearOpMode() {
+
+    override fun runOpMode() {
+        // boot probe: this OpMode touches ONLY the 4 drive motors — if even
+        // those are missing, say so instead of crashing.
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.driveMotors) {
+            while (!isStopRequested) {
+                telemetry.addLine("!! DRIVE MOTORS NOT DETECTED !!")
+                telemetry.addLine("Check the Driver Station configuration.")
+                telemetry.update()
+            }
+            return
+        }
+
+        // Touches ONLY frontleft/frontright/backleft/backright.
+        val drivetrain = Drivetrain()
+
+        telemetry.addLine("DRIVE ONLY: hub + 4 drive motors, nothing else.")
+        telemetry.addLine("LEFT STICK drive / RIGHT STICK turn")
+        telemetry.addLine("LB slow mode | dpad UP/DOWN encoder nudge")
+        telemetry.update()
+        waitForStart()
+
+        while (opModeIsActive()) {
+            val forward = -gamepad1.left_stick_y.toDouble()
+            val strafe = gamepad1.left_stick_x.toDouble()
+            val turn = gamepad1.right_stick_x.toDouble()
+            val scale = if (gamepad1.left_bumper) 0.3 else 1.0
+
+            if (gamepad1.dpad_up || gamepad1.dpad_down) {
+                // small relative encoder move — also proves position control
+                val cm = if (gamepad1.dpad_up) 5.0 else -5.0
+                drivetrain.driveForward(cm, speed = 0.25)
+                sleep(400)
+            } else {
+                drivetrain.driveTeleOp(forward * scale, strafe * scale, turn * scale)
+            }
+
+            val motors = listOf(
+                "FL" to drivetrain.FrontLeft, "FR" to drivetrain.FrontRight,
+                "BL" to drivetrain.BackLeft, "BR" to drivetrain.BackRight,
+            )
+            for (name in motors) {
+                val (label, m) = name
+                val vel = try {
+                    m.encoderVelocity.into(dev.nextftc.units.RotationsPerMinute)
+                } catch (_: Exception) {
+                    0.0
+                }
+                val pos = try {
+                    m.encoderPosition.into(dev.nextftc.units.Radians)
+                } catch (_: Exception) {
+                    0.0
+                }
+                telemetry.addData(
+                    label,
+                    String.format(Locale.US, "%.0f RPM, %.1f rad", vel, pos),
+                )
+            }
+            telemetry.addData("slow", if (gamepad1.left_bumper) "ON" else "off")
+            telemetry.update()
+        }
+
+        drivetrain.driveTeleOp(0.0, 0.0, 0.0) // stop
+    }
+}
+// ============================================================================
+// ============ Neural Net Test (was NnTestOpMode.kt) ============
+// ============================================================================
+
+
+/**
+ * ============ NEURAL NET TEST — trust-building bench ============
+ *
+ * Runs both on-robot neural nets against the live cameras WITHOUT any robot
+ * motion, so you can validate them on the bench:
+ *
+ *  * the ball DETECTOR's verdicts (boxes are also drawn cyan on the DS
+ *    preview by the processor itself), with the current authority mode,
+ *  * the SHOT PREDICTOR's P(hit) across a range of distances at the RPM the
+ *    calibrated curve commands, at the live battery voltage.
+ *
+ * Interpretation: the predictor table should look like a sensible curve —
+ * high P(hit) where the shooter is dialed in, dropping off at the extremes.
+ * If it's flat or weird, the training data or model is bad; retrain.
+ */
+@TeleOp(name = "Neural Net Test", group = "Test")
+class NnTestOpMode : LinearOpMode() {
+
+    override fun runOpMode() {
+        // boot probe: without the cameras this OpMode has nothing to test
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.vision) {
+            while (!isStopRequested) {
+                telemetry.addLine("!! AUTONOMOUS HARDWARE NOT DETECTED !!")
+                telemetry.addLine("Neural Net Test needs both cameras — nothing to test.")
+                telemetry.addData("Missing", hw.missingList.joinToString(", "))
+                telemetry.update()
+            }
+            return
+        }
+
+        ShotPredictor.ensureLoaded(hardwareMap.appContext)
+        val ballLocator = BallLocator()
+        val detector = DetectorProcessor(hardwareMap.appContext)
+        val vision = VisionSubsystem(
+            hardwareMap,
+            extraUpProcessors = emptyList(),
+            extraFrontProcessors = ballLocator.processors + detector,
+        )
+
+        telemetry.addData("Detector", if (detector.loaded) "model loaded" else "no model file")
+        telemetry.addData("Detector mode", NN_DETECTOR_MODE.name)
+        telemetry.addData("Shot predictor", if (ShotPredictor.available) "loaded" else "not loaded")
+        telemetry.update()
+        waitForStart()
+
+        while (opModeIsActive()) {
+            vision.periodic()
+
+            val targets = ballLocator.visibleTargets()
+            val nn = NeuralReferee.latest()
+
+            telemetry.addData("NN mode", NN_DETECTOR_MODE.name)
+            telemetry.addData(
+                "NN detections",
+                "%d %s".format(
+                    nn.size,
+                    if (NeuralReferee.fresh()) "(fresh)" else "(stale)",
+                ),
+            )
+            for (d in nn) {
+                telemetry.addData(
+                    "  NN %s".format(d.label),
+                    String.format(Locale.US, "%.0f%% @ (%.0f,%.0f)", d.confidence * 100, d.x, d.y),
+                )
+            }
+            telemetry.addData("HSV targets (post-referee)", targets.size)
+            for (t in targets.take(4)) {
+                telemetry.addData(
+                    "  HSV %s".format(t.label),
+                    String.format(Locale.US, "%.0fcm %+.1fdeg", t.distanceCm, t.bearingDeg),
+                )
+            }
+
+            if (ShotPredictor.available) {
+                telemetry.addData("Battery", "%.2fV".format(ShotPredictor.batteryVolts()))
+                for (distCm in listOf(90.0, 110.0, 130.0, 150.0)) {
+                    val rpm = ShooterModel.rpmForDistance(distCm)
+                    val p = ShotPredictor.pHit(distCm, rpm, ShotPredictor.batteryVolts())
+                    telemetry.addData(
+                        "P(hit) %dcm".format(distCm.toInt()),
+                        "rpm %.0f -> %s".format(rpm, p?.let { "%.0f%%".format(it * 100) } ?: "?"),
+                    )
+                }
+            }
+            telemetry.update()
+        }
+
+        vision.close()
+    }
+}
+// ============================================================================
+// ============ Experiment + CustomTeleOp (was main.kt) ============
+// NOTE: there are intentionally NO top-level hardware singletons anymore.
+// NextMotor binds itself to the shared NextFTC event loop at construction,
+// so eagerly constructing motors for devices that are not configured would
+// crash the app on a background thread. Every OpMode constructs exactly
+// what its HardwareProbe says exists.
+// ============================================================================
+
+// NOTE: there are intentionally NO top-level hardware singletons anymore.
+// NextMotor binds itself to the shared NextFTC event loop at construction,
+// so eagerly constructing motors for devices that aren't configured would
+// crash the app on a background thread (e.g. a one-wheel-flywheel test
+// robot). Every OpMode now constructs exactly what its HardwareProbe says
+// exists — see hardware.kt (HardwareProbe).
+
+
+class Experiment : LinearOpMode() {
+    override fun runOpMode() { // setup, code runs once
+        // boot probe: no drive motors configured -> nothing to run
+        val hw = HardwareProbe.probe(hardwareMap)
+        if (!hw.driveMotors) {
+            while (!isStopRequested) {
+                telemetry.addLine("!! DRIVE MOTORS NOT DETECTED !!")
+                telemetry.addLine("Check the Driver Station configuration.")
+                telemetry.update()
+            }
+            return
+        }
+
+        // Local, probe-gated instances — see the note above the file.
+        val drivetrain = Drivetrain()
+        val teleOp = CustomTeleOp(drivetrain)
+        val loader = Loader().also { it.home() }
+
+        drivetrain.driveForward(10.0)
+        sleep(5000)
+        drivetrain.driveBackward(100.0)
+        sleep(5000)
+        drivetrain.driveRight(100.0)
+        sleep(5000)
+        drivetrain.driveLeft(100.0)
+        sleep(5000)
+        drivetrain.turn(90.0)
+        sleep(5000)
+        // Test new driveAtAngle function
+        drivetrain.driveAtAngle(50.0, 45.0) // Diagonal 45 deg for 50 cm
+        sleep(5000)
+        drivetrain.driveAtAngle(60.0, 15.0) // 15 deg for 60 cm
+        sleep(5000)
+        drivetrain.flushMotors()
+
+        while (opModeIsActive()) { // main loop
+            teleOp.refresh(controller)
+
+            // Shooter/loader test bench: X (hold) indexes one ball per stroke
+            // into the (possibly spinning) flywheel, Y (tap) homes the loader.
+            if (controller.x) loader.stroke()
+            if (controller.y) loader.home()
+            telemetry.addData("LOADER", "phase %s, %d strokes".format(loader.phase.name, loader.strokeCount))
+            telemetry.update()
+
+
+
+        }
+
+
+
+    }
+
+
+
+
+
+}
+/**
+ * Minimal gamepad-to-drivetrain adapter used by the [Experiment] OpMode
+ * (merged here from the old TeleOP.kt — it belongs with the robot singletons).
+ */
+class CustomTeleOp(
+    private val drivetrain: Drivetrain
+) {
+    fun refresh(gamepad: Gamepad) {
+        val forward = -gamepad.left_stick_y.toDouble()
+        val strafe = gamepad.left_stick_x.toDouble()
+        val turn = gamepad.right_stick_x.toDouble()
+
+        drivetrain.driveTeleOp(forward, strafe, turn)
     }
 }

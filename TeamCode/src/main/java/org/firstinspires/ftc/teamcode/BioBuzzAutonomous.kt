@@ -8,10 +8,6 @@ import com.acmerobotics.roadrunner.Vector2d
 import com.pedropathing.ivy.behaviors.EndCondition
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
-import org.firstinspires.ftc.teamcode.blackbox.BlackBox
-import org.firstinspires.ftc.teamcode.blackbox.FrameGrabProcessor
-import org.firstinspires.ftc.teamcode.nn.DetectorProcessor
-import org.firstinspires.ftc.teamcode.nn.ShotPredictor
 import org.firstinspires.ftc.teamcode.roadrunner.MecanumDrive
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.teamcode.vision.VisionTuning
