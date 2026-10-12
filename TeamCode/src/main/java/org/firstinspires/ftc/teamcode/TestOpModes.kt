@@ -858,17 +858,11 @@ class NnTestOpMode : LinearOpMode() {
 // ============ Experiment + CustomTeleOp (was main.kt) ============
 // NOTE: there are intentionally NO top-level hardware singletons anymore.
 // NextMotor binds itself to the shared NextFTC event loop at construction,
-// so eagerly constructing motors for devices that are not configured would
-// crash the app on a background thread. Every OpMode constructs exactly
-// what its HardwareProbe says exists.
-// ============================================================================
-
-// NOTE: there are intentionally NO top-level hardware singletons anymore.
-// NextMotor binds itself to the shared NextFTC event loop at construction,
 // so eagerly constructing motors for devices that aren't configured would
 // crash the app on a background thread (e.g. a one-wheel-flywheel test
 // robot). Every OpMode now constructs exactly what its HardwareProbe says
 // exists — see hardware.kt (HardwareProbe).
+// ============================================================================
 
 
 class Experiment : LinearOpMode() {
