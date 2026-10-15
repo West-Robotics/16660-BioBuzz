@@ -147,6 +147,49 @@ const val CAPTURE_TURN_MAX_POWER = 0.20    // cap on the turn-toward-ball term
 const val SEARCH_SWEEP_TURN_POWER = 0.12   // in-place sweep when nothing is visible or remembered
 const val AUTONOMY_MATCH_BUDGET_SEC = 30.0 // full autonomous period — the planner's clock frame
 
+// -- Score-loop time budgeting (PhaseClock; see autonomy.kt) --
+const val AUTONOMY_PARK_RESERVE_SEC = 3.0   // ALWAYS reserved for the park move
+const val AUTONOMY_FIRE_RESERVE_SEC = 6.0   // reserved for spin-up + per-ball feeding (4 balls x 1.2s)
+const val MIN_CYCLE_REMAINING_SEC = 14.0    // a second collect+align+fire cycle must fit inside this
+
+// -- Pickup confirmation via intake motor current (a real ball-load signature) --
+const val PICKUP_CURRENT_BUMP_A = 1.5       // MEASURE: current rise over baseline when a ball enters
+const val PICKUP_BUMP_MIN_MS = 60.0         // bump must last at least this to count (debounce)
+const val PICKUP_BUMP_MAX_MS = 450.0        // longer than this is a jam/obstruction, not a pickup
+
+// -- Dodge anti-oscillation --
+const val DODGE_LATCH_MS = 600.0            // dodge direction latched for this long once chosen
+const val BLOCKED_GIVEUP_MS = 1500.0        // drop the committed target if blocked this long
+
+// ================== 3-WHEEL DEAD-WHEEL ODOMETRY (add the pods: ~zero-slip localization) ==================
+// The Road Runner localizer uses these automatically WHEN all three motors exist
+// in the hardware configuration; otherwise it falls back to the (slip-prone)
+// mecanum drive-motor odometry. Bolt on any 3" style omni odometry pods and
+// name the motors below in the Driver Hub config.
+const val DEAD_WHEEL_PAR0_NAME = "par0"     // parallel wheel (forward rolling)
+const val DEAD_WHEEL_PAR1_NAME = "par1"     // second parallel wheel
+const val DEAD_WHEEL_PERP_NAME = "perp"     // perpendicular wheel
+const val DEAD_WHEEL_TICKS_PER_REV = 2000.0 // goBILDA 4-bar pod: VERIFY against the spec sheet
+const val DEAD_WHEEL_DIAMETER_IN = 1.37795  // 35mm pod wheel: MEASURE
+
+// MEASURE: each wheel's mounting position IN INCHES from the drive center,
+// +x forward, +y left; angle in radians (0 = rolls when driving forward,
+// PI/2 = rolls when strafing left). Sign conventions are corrected with the
+// reversed flags — run the "Localization Test" style check (push the robot,
+// watch telemetry) after wiring.
+const val DEAD_WHEEL_PAR0_X_IN = 0.0
+const val DEAD_WHEEL_PAR0_Y_IN = 6.0
+const val DEAD_WHEEL_PAR0_ANGLE_RAD = 0.0
+const val DEAD_WHEEL_PAR0_REVERSED = false
+const val DEAD_WHEEL_PAR1_X_IN = 0.0
+const val DEAD_WHEEL_PAR1_Y_IN = -6.0
+const val DEAD_WHEEL_PAR1_ANGLE_RAD = 0.0
+const val DEAD_WHEEL_PAR1_REVERSED = false
+const val DEAD_WHEEL_PERP_X_IN = -6.0
+const val DEAD_WHEEL_PERP_Y_IN = 0.0
+val DEAD_WHEEL_PERP_ANGLE_RAD = Math.PI / 2
+const val DEAD_WHEEL_PERP_REVERSED = false
+
 // ================== STRATEGIC PLANNER (lookahead brain) ==================
 const val MATCH_TELEOP_SECONDS = 120.0      // BioBuzz driver-controlled period
 const val PLANNER_COLLECT_HANDLE_SEC = 1.5  // intake time after reaching a ball
@@ -183,7 +226,7 @@ const val FLYWHEEL_PRESPIN_BALL_COUNT = 2 // Start warming the flywheel once we 
 //   * AprilTag test targets + camera names-> this file (see camera section above)
 
 // -- Ball capacity (single source of truth; StrategicController uses it too) --
-const val MAX_BALLS_HELD = 3            // MEASURE: how many balls the robot can store
+const val MAX_BALLS_HELD = 4            // MEASURE: how many balls the robot can store
 
 // -- Ball point values (keep in sync with NECTAR_SCORE_MULTIPLIER) --
 const val POLLEN_VALUE = 1.0

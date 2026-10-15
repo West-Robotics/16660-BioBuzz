@@ -24,6 +24,43 @@ import kotlin.math.sin
 
 
 /**
+ * ============ PHASE CLOCK — the 30s autonomous budget manager ============
+ *
+ * The phase machine's own timeouts can sum to more than the autonomous
+ * period (9s collect + 6s flower + 4s polish + 8s align + fire > 30s), which
+ * historically meant the FMS could kill the OpMode mid-fire and un-parked.
+ * Every phase now asks the clock for a deadline instead of trusting its own
+ * timeout: budgets are clamped to what remains after the reserved work
+ * (park, fire), and the score loop asks [fits] before starting a cycle that
+ * cannot finish.
+ */
+class PhaseClock(
+    private val periodSec: Double = AUTONOMY_MATCH_BUDGET_SEC,
+) {
+    private val startNanos = System.nanoTime()
+
+    fun elapsedSec(): Double = (System.nanoTime() - startNanos) / 1e9
+
+    /** Seconds left in the autonomous period. */
+    fun remainingSec(): Double = (periodSec - elapsedSec()).coerceAtLeast(0.0)
+
+    /** True when at least [sec] seconds remain in the period. */
+    fun fits(sec: Double): Boolean = remainingSec() >= sec
+
+    /**
+     * Deadline (nanos) for a phase with its own [phaseTimeoutMs] cap: never
+     * more than the phase wants, never more than the period has left after
+     * [reserveSec] is set aside for later work. Zero-length means "start
+     * nothing" (the deadline is now).
+     */
+    fun deadlineNanos(phaseTimeoutMs: Double, reserveSec: Double = 0.0): Long {
+        val availableMs = (remainingSec() - reserveSec) * 1e3
+        if (availableMs <= 0.0) return System.nanoTime()
+        return System.nanoTime() + (minOf(phaseTimeoutMs, availableMs) * 1e6).toLong()
+    }
+}
+
+/**
  * ============ SHOOTER MODEL — flywheel RPM vs. landing distance ============
  *
  * The calibration curve lives in globals.kt: [SHOOTER_CALIBRATION_RPM] paired
