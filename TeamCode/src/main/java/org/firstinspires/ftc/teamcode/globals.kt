@@ -134,6 +134,19 @@ const val WM_BALL_MAX_AGE_SEC = 45.0    // how long an unseen ball stays remembe
 const val WM_ROBOT_MAX_AGE_SEC = 6.0    // opponents are assumed to have moved by then
 const val WM_CONFIDENCE_TAU_SEC = 10.0   // confidence decay time constant
 
+// -- Ball pursuit upgrades (COLLECT phase; see BioBuzzAutonomous.collectBalls) --
+const val WM_TRACK_EMA_ALPHA = 0.4        // track position smoothing on re-sight (0..1, higher = trust newer)
+const val WM_VISIBLE_FRESH_SEC = 0.3      // a track re-sighted within this is "visible now"
+const val DEAD_RECKON_MAX_AGE_SEC = 3.0   // chase an unseen ball's remembered spot for at most this long
+const val CHASE_MIN_CONTOUR_AREA_PX = 350.0 // smaller/farther blobs are remembered but not chased
+const val TARGET_SWITCH_CONFIRM_LOOPS = 3 // challenger must win this many consecutive planner picks to unseat a target
+const val AVOID_ROBOT_BEARING_DEG = 15.0   // robot blob within this of the target bearing blocks pursuit
+const val AVOID_ROBOT_STRAFE = 0.15        // sidestep power while dodging a blocking robot
+const val CAPTURE_TURN_GAIN = 0.008        // turn power per degree of bearing (rotate toward the ball)
+const val CAPTURE_TURN_MAX_POWER = 0.20    // cap on the turn-toward-ball term
+const val SEARCH_SWEEP_TURN_POWER = 0.12   // in-place sweep when nothing is visible or remembered
+const val AUTONOMY_MATCH_BUDGET_SEC = 30.0 // full autonomous period — the planner's clock frame
+
 // ================== STRATEGIC PLANNER (lookahead brain) ==================
 const val MATCH_TELEOP_SECONDS = 120.0      // BioBuzz driver-controlled period
 const val PLANNER_COLLECT_HANDLE_SEC = 1.5  // intake time after reaching a ball

@@ -137,6 +137,8 @@ data class TrackedObject(
     var velXcmPerSec: Double,
     var velYcmPerSec: Double,
     val isBall: Boolean,
+    /** Latest sighting's contour area (px^2) — the chase-quality gate. */
+    var lastAreaPx: Double = 0.0,
 ) {
     /** Game value of this object (POLLEN_VALUE / NECTAR_VALUE; 0 for others). */
     val value: Double
@@ -147,7 +149,25 @@ data class TrackedObject(
         }
 
     fun distanceTo(xCm: Double, yCm: Double): Double = hypot(fieldXcm - xCm, fieldYcm - yCm)
+
+    /** Seconds since the last visual sighting. */
+    fun ageSec(nowNanos: Long): Double = (nowNanos - lastSeenNanos) / 1e9
+
+    /**
+     * Distance (cm) and bearing (deg, + = right of the robot centerline) of
+     * this track from the robot — the same convention as live sightings, so
+     * one set of pursuit gains serves visible and remembered targets alike.
+     */
+    fun relativeToRobot(robotXcm: Double, robotYcm: Double, headingRad: Double): Pair<Double, Double> {
+        val dx = fieldXcm - robotXcm
+        val dy = fieldYcm - robotYcm
+        val bearing = wrapDeg(Math.toDegrees(headingRad) - Math.toDegrees(atan2(dy, dx)))
+        return hypot(dx, dy) to bearing
+    }
 }
+
+/** Wraps an angle in degrees into (-180, 180]. */
+private fun wrapDeg(a: Double): Double = ((a + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
 
 class WorldModel {
 
@@ -211,10 +231,14 @@ class WorldModel {
                     best.velXcmPerSec = 0.7 * best.velXcmPerSec + 0.3 * (xCm - best.fieldXcm) / trackDt
                     best.velYcmPerSec = 0.7 * best.velYcmPerSec + 0.3 * (yCm - best.fieldYcm) / trackDt
                 }
-                best.fieldXcm = xCm
-                best.fieldYcm = yCm
+                // EMA-smooth the position so pinhole noise doesn't jerk the
+                // track (the velocity estimate above still uses the raw delta).
+                val a = WM_TRACK_EMA_ALPHA
+                best.fieldXcm += a * (xCm - best.fieldXcm)
+                best.fieldYcm += a * (yCm - best.fieldYcm)
                 best.confidence = (best.confidence * 0.5 + 0.7).coerceAtMost(1.0)
                 best.lastSeenNanos = nowNanos
+                best.lastAreaPx = s.contourArea
                 used.add(best.id)
             } else {
                 tracks.add(
@@ -224,6 +248,7 @@ class WorldModel {
                         confidence = 0.6, lastSeenNanos = nowNanos,
                         velXcmPerSec = 0.0, velYcmPerSec = 0.0,
                         isBall = s.isBall,
+                        lastAreaPx = s.contourArea,
                     )
                 )
             }
@@ -255,6 +280,14 @@ class WorldModel {
 
     /** Remembered balls, best-confidence first. */
     fun balls(): List<TrackedObject> = tracks.filter { it.isBall }.sortedByDescending { it.confidence }
+
+    /** Lookup by track id (for target commitment in the COLLECT phase). */
+    fun trackById(id: Int): TrackedObject? = tracks.firstOrNull { it.id == id }
+
+    /** Forgets a ball (confirmed picked up) so it is never re-chased. */
+    fun removeBall(id: Int) {
+        tracks.removeAll { it.id == id && it.isBall }
+    }
 
     /** Remembered flowers. */
     fun flowers(): List<TrackedObject> = tracks.filter { !it.isBall && it.label == "Flower" }
