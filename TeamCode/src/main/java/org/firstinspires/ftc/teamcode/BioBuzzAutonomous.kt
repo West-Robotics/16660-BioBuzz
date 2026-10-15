@@ -13,6 +13,7 @@ import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.teamcode.vision.VisionTuning
 import org.firstinspires.ftc.teamcode.vision.visionGuidance
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
+import kotlin.math.abs
 
 /**
  * Field-specific route plan. The collection phase is now vision-directed
@@ -228,16 +229,26 @@ class BioBuzzAutonomous : LinearOpMode() {
     }
 
     /**
-     * PHASE 1 core: capacity-aware, vision-directed collection. Picks the
-     * PRIORITY ball (see globals.kt: PRIORITY_* / LAST_SLOT_*), drives onto it
-     * with the intake running, confirms the pickup by proximity-settle or by
-     * the target vanishing at the intake, then repeats until full or timeout.
-     * Falls back to a slow forward creep when nothing is visible.
+     * PHASE 1 core: capacity-aware, vision-directed collection with FIELD
+     * MEMORY (BallMemory). Each loop:
+     *   1. fuse this frame's ball sightings into field coordinates,
+     *   2. COMMIT to one remembered ball — a challenger must win by
+     *      TARGET_SWITCH_MARGIN utility, which kills target dithering,
+     *   3. dodge opponent robots sitting in the pursuit corridor,
+     *   4. pursue with the SAME gains whether the ball is in view (visual
+     *      servo) or only remembered (dead-reckoned on the fused pose), and
+     *      TURN toward it while translating — converges wide bearings much
+     *      faster than strafe alone and keeps the ball centered in the FOV,
+     *   5. confirm pickup by proximity-settle (an entry that vanishes at
+     *      close range settles just the same), then forget the ball,
+     *   6. nothing visible AND nothing remembered: sweep-search in place
+     *      instead of the old blind forward creep.
      * Bounded by AUTONOMOUS_COLLECT_TIMEOUT_MS.
      */
     private fun collectBalls(): Int {
+        val memory = BallMemory()
         var collected = 0
-        var lastTarget: BallTarget? = null
+        var committedId: Int? = null
         var closeSinceNanos = 0L
         val deadline = System.nanoTime() + (AUTONOMOUS_COLLECT_TIMEOUT_MS * 1e6).toLong()
 
@@ -245,53 +256,90 @@ class BioBuzzAutonomous : LinearOpMode() {
         while (opModeIsActive() && collected < MAX_BALLS_HELD && System.nanoTime() < deadline) {
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
+            val now = System.nanoTime()
+            val robotXcm = drive.pose.position.x * 2.54
+            val robotYcm = drive.pose.position.y * 2.54
 
-            val best = ballLocator.bestBall(MAX_BALLS_HELD - collected)
+            // 1. fuse sightings into the field-frame ball map
+            memory.absorb(ballLocator.visibleTargets(), drive.pose, now)
+            val robots = ballLocator.visibleRobots()
             report()
 
-            if (best == null) {
-                // A target that vanished at close range was almost certainly
-                // swallowed by the intake — count it.
-                if (lastTarget != null && lastTarget.distanceCm <= PICKUP_CONFIRM_CM) {
-                    collected++
-                    telemetry.addData("COLLECT pickup", "${lastTarget.label} (vanished)")
-                    closeSinceNanos = 0L
-                } else {
-                    drive.setDrivePowers(PoseVelocity2d(Vector2d(0.15, 0.0), 0.0)) // creep
-                }
-                lastTarget = null
+            // 2. commitment with switch hysteresis
+            val committed = committedId?.let { memory.byId(it) }
+            val best = memory.best(robotXcm, robotYcm, MAX_BALLS_HELD - collected, now)
+            if (committed == null) {
+                committedId = best?.id
+            } else if (best != null && best.id != committed.id &&
+                memory.utilityOf(best, robotXcm, robotYcm) >
+                memory.utilityOf(committed, robotXcm, robotYcm) * TARGET_SWITCH_MARGIN
+            ) {
+                committedId = best.id
+            }
+            val target = committedId?.let { memory.byId(it) }
+
+            if (target == null) {
+                // 6. nothing worth chasing: sweep-search in place
+                closeSinceNanos = 0L
+                telemetry.addData("COLLECT", "no target — sweep | map: ${memory.summary(now)}")
+                telemetry.update()
+                drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), -SEARCH_SWEEP_TURN_POWER))
                 continue
             }
 
+            val (distCm, bearingDeg) = memory.relativeTo(target, drive.pose)
+
+            // 3. opponent dodge: a robot blob in the pursuit corridor blocks the line
+            val blocker = robots.firstOrNull {
+                abs(it.bearingDeg - bearingDeg) < AVOID_ROBOT_BEARING_DEG && it.distanceCm < distCm
+            }
+            if (blocker != null) {
+                // Drop the commitment so next frame re-approaches from a new angle.
+                committedId = null
+                closeSinceNanos = 0L
+                val dodge = if (blocker.bearingDeg >= 0) AVOID_ROBOT_STRAFE else -AVOID_ROBOT_STRAFE
+                telemetry.addData("COLLECT dodge", "robot %.0fcm %+.0fdeg".format(blocker.distanceCm, blocker.bearingDeg))
+                telemetry.update()
+                drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, dodge), 0.0))
+                continue
+            }
+
+            // 4. pursue (live sighting or remembered spot — identical controller)
+            val forward = (HiveScoringConfig.CAPTURE_RANGE_GAIN *
+                (distCm - HiveScoringConfig.CAPTURE_APPROACH_CM))
+                .coerceIn(-HiveScoringConfig.ASSIST_MAX_POWER, HiveScoringConfig.ASSIST_MAX_POWER)
+            val strafe = (-HiveScoringConfig.CAPTURE_BEARING_GAIN * bearingDeg)
+                .coerceIn(-HiveScoringConfig.ASSIST_MAX_POWER, HiveScoringConfig.ASSIST_MAX_POWER)
+            // Turn toward the ball while translating (RR: +turn CCW).
+            val turn = (-CAPTURE_TURN_GAIN * bearingDeg)
+                .coerceIn(-CAPTURE_TURN_MAX_POWER, CAPTURE_TURN_MAX_POWER)
+            drive.setDrivePowers(PoseVelocity2d(Vector2d(forward, strafe), turn))
+
             telemetry.addData(
                 "COLLECT $collected/$MAX_BALLS_HELD",
-                "%s %.0fcm %+.1fdeg".format(best.label, best.distanceCm, best.bearingDeg),
+                "%s %.0fcm %+.1fdeg %s".format(
+                    target.label, distCm, bearingDeg,
+                    if (target.visibleNow) "[live]" else "[memory]",
+                ),
             )
             telemetry.update()
 
-            // Steer toward the chosen ball (RR: +forward, +strafe left, +turn CCW).
-            val forward = (HiveScoringConfig.CAPTURE_RANGE_GAIN *
-                (best.distanceCm - HiveScoringConfig.CAPTURE_APPROACH_CM))
-                .coerceIn(-HiveScoringConfig.ASSIST_MAX_POWER, HiveScoringConfig.ASSIST_MAX_POWER)
-            val strafe = (-HiveScoringConfig.CAPTURE_BEARING_GAIN * best.bearingDeg)
-                .coerceIn(-HiveScoringConfig.ASSIST_MAX_POWER, HiveScoringConfig.ASSIST_MAX_POWER)
-            drive.setDrivePowers(PoseVelocity2d(Vector2d(forward, strafe), 0.0))
-
-            // Pickup confirmation 1: close for long enough.
-            if (best.distanceCm <= PICKUP_CONFIRM_CM) {
+            // 5. pickup confirmation: close for long enough — works the same
+            //    whether the ball is still visible or vanished at the intake.
+            if (distCm <= PICKUP_CONFIRM_CM) {
                 if (closeSinceNanos == 0L) {
-                    closeSinceNanos = System.nanoTime()
-                } else if ((System.nanoTime() - closeSinceNanos) / 1e6 >= PICKUP_SETTLE_MS) {
+                    closeSinceNanos = now
+                } else if ((now - closeSinceNanos) / 1e6 >= PICKUP_SETTLE_MS) {
                     collected++
-                    telemetry.addData("COLLECT pickup", "${best.label} (settled)")
+                    memory.remove(target.id)
+                    committedId = null
                     closeSinceNanos = 0L
-                    lastTarget = null
-                    continue
+                    telemetry.addData("COLLECT pickup", "${target.label} (settled)")
+                    telemetry.update()
                 }
             } else {
                 closeSinceNanos = 0L
             }
-            lastTarget = best
         }
 
         drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), 0.0))

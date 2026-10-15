@@ -104,6 +104,19 @@ const val AUTONOMOUS_COLLECT_TIMEOUT_MS = 9000.0 // hard cap on the collection p
 const val PICKUP_CONFIRM_CM = 25.0   // ball closer than this can count as picked up
 const val PICKUP_SETTLE_MS = 400.0    // must stay that close this long to confirm
 
+// -- Ball pursuit upgrades (used by BallMemory + the COLLECT phase; see pathfinding.kt) --
+const val BALL_MEMORY_MATCH_CM = 15.0      // re-associate a sighting with a remembered ball within this radius
+const val BALL_MEMORY_MAX_AGE_SEC = 8.0    // unseen remembered ball is dropped from the map after this
+const val BALL_MEMORY_EMA_ALPHA = 0.4      // position/range smoothing on re-sight (0..1, higher = trust newer)
+const val DEAD_RECKON_MAX_AGE_SEC = 3.0    // chase an unseen ball's remembered spot for at most this long
+const val CHASE_MIN_CONTOUR_AREA_PX = 350.0 // smaller/farther blobs are remembered but not chased
+const val TARGET_SWITCH_MARGIN = 1.5       // a new ball must beat the committed one's utility by this factor
+const val AVOID_ROBOT_BEARING_DEG = 15.0    // robot blob within this of the target bearing blocks pursuit
+const val AVOID_ROBOT_STRAFE = 0.15         // sidestep power while dodging a blocking robot
+const val CAPTURE_TURN_GAIN = 0.008         // turn power per degree of bearing (rotate toward the ball)
+const val CAPTURE_TURN_MAX_POWER = 0.20     // cap on the turn-toward-ball term
+const val SEARCH_SWEEP_TURN_POWER = 0.12    // in-place sweep when nothing is visible or remembered
+
 // ================== FLOWER PULL-OUT — CUSTOMIZE FOR YOUR MECHANISM ==================
 const val FLOWER_PULL_ENABLED = true         // autonomous tries flowers at all
 const val FLOWER_APPROACH_CM = 25.0          // MEASURE: standoff taken before pulling

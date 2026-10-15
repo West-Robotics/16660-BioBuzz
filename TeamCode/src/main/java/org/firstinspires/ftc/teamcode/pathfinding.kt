@@ -1,8 +1,173 @@
 package org.firstinspires.ftc.teamcode
 
+import com.acmerobotics.roadrunner.Pose2d
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.sin
+
+/**
+ * ============ BALL MEMORY — persistent field-frame ball map ============
+ *
+ * A human forgets a ball the moment it leaves the camera; the robot doesn't
+ * have to. Every sighting is projected into FIELD coordinates (Road Runner
+ * pose, cm) and kept as a stable-ID entry with:
+ *   * EMA-smoothed position/range (pinhole noise doesn't jerk the pursuit),
+ *   * an age (unseen entries expire; only fresh ones are chased),
+ *   * a "chaseable" contour-area gate (tiny/far blobs are logged but never
+ *     worth leaving the current target for),
+ *   * a `visibleNow` flag so the COLLECT loop can pick visual servo or
+ *     dead-reckoned pursuit without caring which one applies.
+ *
+ * The COLLECT phase commits to one entry and only switches when another
+ * beats it by TARGET_SWITCH_MARGIN — see BioBuzzAutonomous.collectBalls.
+ *
+ * Coordinates: Road Runner field frame in CENTIMETERS (+x forward, +y left,
+ * heading CCW, origin at the autonomous start pose).
+ */
+class BallMemory {
+
+    /** One remembered ball. */
+    data class Entry(
+        val id: Int,
+        val label: String,
+        var fieldXcm: Double,
+        var fieldYcm: Double,
+        var lastSeenNanos: Long,
+        /** EMA of the live sighting range — used for pickup confirmation. */
+        var smoothedDistCm: Double,
+        var contourArea: Double,
+        var visibleNow: Boolean,
+    ) {
+        /** Game value of this ball (globals.kt: POLLEN_VALUE / NECTAR_VALUE). */
+        val value: Double get() = if (label.contains("Nectar")) NECTAR_VALUE else POLLEN_VALUE
+
+        fun ageSec(nowNanos: Long): Double = (nowNanos - lastSeenNanos) / 1e9
+    }
+
+    private val entries = mutableListOf<Entry>()
+    private var nextId = 1
+
+    val size: Int get() = entries.size
+
+    /**
+     * Fuses this frame's visible [targets] (balls only; flowers ignored)
+     * into the map. Re-sightings re-associate with the nearest same-label
+     * entry within [BALL_MEMORY_MATCH_CM] and EMA-smooth it; new sightings
+     * create entries. `visibleNow` is recomputed each call.
+     */
+    fun absorb(targets: List<BallTarget>, pose: Pose2d, nowNanos: Long) {
+        for (e in entries) e.visibleNow = false
+
+        // Road Runner pose is inches; the map is cm.
+        val px = pose.position.x * 2.54
+        val py = pose.position.y * 2.54
+        val h = pose.heading.toDouble()
+
+        for (t in targets) {
+            if (t.label == "Flower") continue
+
+            // robot-relative body frame (+fwd, +left; bearing + = right)
+            val bRad = Math.toRadians(t.bearingDeg)
+            val fwdCm = t.distanceCm * cos(bRad)
+            val leftCm = -t.distanceCm * sin(bRad)
+            val x = px + fwdCm * cos(h) - leftCm * sin(h)
+            val y = py + fwdCm * sin(h) + leftCm * cos(h)
+
+            val match = entries
+                .filter { it.label == t.label }
+                .minByOrNull { hypot(it.fieldXcm - x, it.fieldYcm - y) }
+            if (match != null && hypot(match.fieldXcm - x, match.fieldYcm - y) <= BALL_MEMORY_MATCH_CM) {
+                val a = BALL_MEMORY_EMA_ALPHA
+                match.fieldXcm += a * (x - match.fieldXcm)
+                match.fieldYcm += a * (y - match.fieldYcm)
+                match.smoothedDistCm =
+                    if (match.smoothedDistCm <= 0.0) t.distanceCm
+                    else match.smoothedDistCm + a * (t.distanceCm - match.smoothedDistCm)
+                match.contourArea = t.contourArea
+                match.lastSeenNanos = nowNanos
+                match.visibleNow = true
+            } else {
+                entries.add(
+                    Entry(
+                        id = nextId++, label = t.label,
+                        fieldXcm = x, fieldYcm = y,
+                        lastSeenNanos = nowNanos,
+                        smoothedDistCm = t.distanceCm,
+                        contourArea = t.contourArea,
+                        visibleNow = true,
+                    )
+                )
+            }
+        }
+
+        entries.removeAll { it.ageSec(nowNanos) > BALL_MEMORY_MAX_AGE_SEC }
+    }
+
+    /**
+     * Distance (cm) and bearing (deg, + = right of the robot centerline) of
+     * an entry from the robot's current pose — the same convention the live
+     * BallTarget uses, so one set of pursuit gains drives both visual servo
+     * and dead-reckoned pursuit.
+     */
+    fun relativeTo(entry: Entry, pose: Pose2d): Pair<Double, Double> {
+        val px = pose.position.x * 2.54
+        val py = pose.position.y * 2.54
+        val dx = entry.fieldXcm - px
+        val dy = entry.fieldYcm - py
+        val dist = hypot(dx, dy)
+        // World angle to the target minus our heading; +CCW error means the
+        // target is LEFT, and bearing is +right, hence the negation.
+        val bearing = wrapDeg(Math.toDegrees(pose.heading.toDouble() - atan2(dy, dx) * 180.0 / Math.PI))
+        return dist to bearing
+    }
+
+    /** Chase utility of an entry (same formula as BallLocator.utilityOf). */
+    fun utilityOf(entry: Entry, robotXcm: Double, robotYcm: Double): Double {
+        val distCm = hypot(entry.fieldXcm - robotXcm, entry.fieldYcm - robotYcm)
+        val visibility = if (entry.visibleNow) 1.0 else 0.75 // slightly prefer live targets
+        return entry.value * PRIORITY_VALUE_WEIGHT *
+            visibility / (1.0 + (distCm / 100.0) * PRIORITY_DISTANCE_WEIGHT)
+    }
+
+    /**
+     * Best chase candidate (capacity-aware): fresh-enough, blob-solid
+     * entries only; one slot left takes the highest-value ball outright
+     * (LAST_SLOT_PREFER_HIGHEST_VALUE), otherwise highest utility.
+     */
+    fun best(robotXcm: Double, robotYcm: Double, remainingSlots: Int, nowNanos: Long): Entry? {
+        if (remainingSlots <= 0) return null
+        val candidates = entries.filter {
+            it.ageSec(nowNanos) <= DEAD_RECKON_MAX_AGE_SEC && it.contourArea >= CHASE_MIN_CONTOUR_AREA_PX
+        }
+        if (candidates.isEmpty()) return null
+        return if (remainingSlots == 1 && LAST_SLOT_PREFER_HIGHEST_VALUE) {
+            candidates.maxWithOrNull(
+                compareBy<Entry> { it.value }.thenBy { hypot(it.fieldXcm - robotXcm, it.fieldYcm - robotYcm) },
+            )
+        } else {
+            candidates.maxByOrNull { utilityOf(it, robotXcm, robotYcm) }
+        }
+    }
+
+    fun byId(id: Int): Entry? = entries.firstOrNull { it.id == id }
+
+    /** Forgets a ball (called when it is confirmed picked up). */
+    fun remove(id: Int) {
+        entries.removeAll { it.id == id }
+    }
+
+    /** Compact live view for telemetry. */
+    fun summary(nowNanos: Long): String =
+        if (entries.isEmpty()) "empty"
+        else entries.joinToString(" ") { e ->
+            val age = if (e.visibleNow) "live" else "%.1fs".format(e.ageSec(nowNanos))
+            "#%d:%s".format(e.id, age)
+        }
+
+    private fun wrapDeg(a: Double): Double = ((a + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
+}
 
 /**
  * The StrategicController is the "brain" of the robot during autonomous.
