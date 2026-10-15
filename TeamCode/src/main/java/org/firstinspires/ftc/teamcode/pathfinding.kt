@@ -8,6 +8,42 @@ import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
+ * ============ PHASE CLOCK — the 30s autonomous budget manager ============
+ *
+ * The phase machine's own timeouts can sum to more than the autonomous
+ * period (9s collect + 6s flower + 4s polish + 8s align + fire > 30s), which
+ * historically meant the FMS could kill the OpMode mid-fire and un-parked.
+ * Every phase now asks the clock for a deadline instead of trusting its own
+ * timeout: budgets are clamped to what remains after the reserved work
+ * (park, fire), and the multi-cycle loop asks [fits] before starting a cycle
+ * that cannot finish.
+ */
+class PhaseClock(
+    private val periodSec: Double = AUTONOMY_PERIOD_SEC,
+) {
+    private val startNanos = System.nanoTime()
+
+    fun elapsedSec(): Double = (System.nanoTime() - startNanos) / 1e9
+
+    /** Seconds left in the autonomous period. */
+    fun remainingSec(): Double = (periodSec - elapsedSec()).coerceAtLeast(0.0)
+
+    /** True when at least [sec] seconds remain in the period. */
+    fun fits(sec: Double): Boolean = remainingSec() >= sec
+
+    /**
+     * Deadline (nanos) for a phase with its own [phaseTimeoutMs] cap: never
+     * more than the phase wants, never more than the period has left after
+     * [reserveSec] is set aside for later work. Zero means "start nothing".
+     */
+    fun deadlineNanos(phaseTimeoutMs: Double, reserveSec: Double = 0.0): Long {
+        val availableMs = (remainingSec() - reserveSec) * 1e3
+        if (availableMs <= 0.0) return System.nanoTime()
+        return System.nanoTime() + (minOf(phaseTimeoutMs, availableMs) * 1e6).toLong()
+    }
+}
+
+/**
  * ============ BALL MEMORY — persistent field-frame ball map ============
  *
  * A human forgets a ball the moment it leaves the camera; the robot doesn't
@@ -28,7 +64,7 @@ import kotlin.math.sin
  */
 class BallMemory {
 
-    /** One remembered ball. */
+    /** One remembered object (ball or flower). */
     data class Entry(
         val id: Int,
         val label: String,
@@ -39,6 +75,8 @@ class BallMemory {
         var smoothedDistCm: Double,
         var contourArea: Double,
         var visibleNow: Boolean,
+        /** Balls are chased by COLLECT; flowers by the flower phase. */
+        val isBall: Boolean,
     ) {
         /** Game value of this ball (globals.kt: POLLEN_VALUE / NECTAR_VALUE). */
         val value: Double get() = if (label.contains("Nectar")) NECTAR_VALUE else POLLEN_VALUE
@@ -52,10 +90,10 @@ class BallMemory {
     val size: Int get() = entries.size
 
     /**
-     * Fuses this frame's visible [targets] (balls only; flowers ignored)
-     * into the map. Re-sightings re-associate with the nearest same-label
-     * entry within [BALL_MEMORY_MATCH_CM] and EMA-smooth it; new sightings
-     * create entries. `visibleNow` is recomputed each call.
+     * Fuses this frame's visible [targets] (balls AND flowers) into the map.
+     * Re-sightings re-associate with the nearest same-label entry within
+     * [BALL_MEMORY_MATCH_CM] and EMA-smooth it; new sightings create entries.
+     * `visibleNow` is recomputed each call.
      */
     fun absorb(targets: List<BallTarget>, pose: Pose2d, nowNanos: Long) {
         for (e in entries) e.visibleNow = false
@@ -66,8 +104,6 @@ class BallMemory {
         val h = pose.heading.toDouble()
 
         for (t in targets) {
-            if (t.label == "Flower") continue
-
             // robot-relative body frame (+fwd, +left; bearing + = right)
             val bRad = Math.toRadians(t.bearingDeg)
             val fwdCm = t.distanceCm * cos(bRad)
@@ -97,6 +133,7 @@ class BallMemory {
                         smoothedDistCm = t.distanceCm,
                         contourArea = t.contourArea,
                         visibleNow = true,
+                        isBall = t.label != "Flower",
                     )
                 )
             }
@@ -133,13 +170,15 @@ class BallMemory {
 
     /**
      * Best chase candidate (capacity-aware): fresh-enough, blob-solid
-     * entries only; one slot left takes the highest-value ball outright
+     * BALLS only; one slot left takes the highest-value ball outright
      * (LAST_SLOT_PREFER_HIGHEST_VALUE), otherwise highest utility.
      */
     fun best(robotXcm: Double, robotYcm: Double, remainingSlots: Int, nowNanos: Long): Entry? {
         if (remainingSlots <= 0) return null
         val candidates = entries.filter {
-            it.ageSec(nowNanos) <= DEAD_RECKON_MAX_AGE_SEC && it.contourArea >= CHASE_MIN_CONTOUR_AREA_PX
+            it.isBall &&
+                it.ageSec(nowNanos) <= DEAD_RECKON_MAX_AGE_SEC &&
+                it.contourArea >= CHASE_MIN_CONTOUR_AREA_PX
         }
         if (candidates.isEmpty()) return null
         return if (remainingSlots == 1 && LAST_SLOT_PREFER_HIGHEST_VALUE) {
@@ -151,11 +190,26 @@ class BallMemory {
         }
     }
 
+    /**
+     * Nearest remembered flower (for the flower phase): live sightings win,
+     * otherwise dead-reckon to a fresh remembered spot.
+     */
+    fun bestFlower(robotXcm: Double, robotYcm: Double, nowNanos: Long): Entry? =
+        entries
+            .filter { !it.isBall && it.ageSec(nowNanos) <= DEAD_RECKON_MAX_AGE_SEC }
+            .minByOrNull { hypot(it.fieldXcm - robotXcm, it.fieldYcm - robotYcm) }
+
     fun byId(id: Int): Entry? = entries.firstOrNull { it.id == id }
 
     /** Forgets a ball (called when it is confirmed picked up). */
     fun remove(id: Int) {
         entries.removeAll { it.id == id }
+    }
+
+    /** Wipes the map (start of autonomous). */
+    fun clear() {
+        entries.clear()
+        nextId = 1
     }
 
     /** Compact live view for telemetry. */

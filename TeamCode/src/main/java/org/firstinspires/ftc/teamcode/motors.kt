@@ -246,6 +246,56 @@ class Intake : Mechanism {
         intakeMotor.setVelocitySetpoint(0.0.rpm)
 
     }
+
+    /** Present motor current draw in amps (0.0 when the read fails). */
+    val currentAmps: Double
+        get() = try {
+            intakeMotor.current.magnitude
+        } catch (_: Exception) {
+            0.0
+        }
+}
+
+/**
+ * Detects a ball entering the intake by its CURRENT signature: a real load is
+ * a brief current rise above the running baseline (and back down) — unlike a
+ * jam, which stays high. Used by the COLLECT phase as physical pickup
+ * confirmation, so ball counting no longer relies on settle/vanish inference.
+ *
+ * MEASURE PICKUP_CURRENT_BUMP_A on the real robot: with the intake spinning
+ * empty, read telemetry baseline current; then feed a ball and read the peak.
+ */
+class PickupCurrentSensor(private val intake: Intake) {
+
+    private var baselineAmps = 0.5
+    private var highSinceNanos = 0L
+
+    /**
+     * Call every loop. [spinning] = whether the intake is being driven right
+     * now (sensor idles otherwise). Returns true exactly once per completed
+     * ball-load bump.
+     */
+    fun update(spinning: Boolean): Boolean {
+        val now = System.nanoTime()
+        if (!spinning) {
+            highSinceNanos = 0L
+            return false
+        }
+
+        val current = intake.currentAmps
+        return if (current >= baselineAmps + PICKUP_CURRENT_BUMP_A) {
+            if (highSinceNanos == 0L) highSinceNanos = now
+            false
+        } else {
+            // Slowly track the empty-running baseline when current is low.
+            baselineAmps += 0.05 * (current - baselineAmps)
+            if (highSinceNanos == 0L) return false
+            val bumpMs = (now - highSinceNanos) / 1e6
+            highSinceNanos = 0L
+            // A rise that lasted between min and max = one ball went in.
+            bumpMs in PICKUP_BUMP_MIN_MS..PICKUP_BUMP_MAX_MS
+        }
+    }
 }
 
 /**
