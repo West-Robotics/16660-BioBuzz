@@ -58,6 +58,7 @@ class BioBuzzAutonomous : LinearOpMode() {
     private lateinit var intake: Intake
     private lateinit var flywheel: FlyWheel
     private lateinit var loader: Loader
+    private lateinit var jamGuard: IntakeJamGuard
     private lateinit var clock: PhaseClock
     private lateinit var pickupSensor: PickupCurrentSensor
     private val world = WorldModel()
@@ -103,11 +104,20 @@ class BioBuzzAutonomous : LinearOpMode() {
         intake = Intake()
         flywheel = FlyWheel()
         loader = Loader().also { it.home() }
+        jamGuard = IntakeJamGuard(intake)
 
         vision.attachTo(drive, enableCorrections = VisionTuning.FUSION_ENABLED_DEFAULT)
         BlackBox.start(hardwareMap.appContext, "auto")
         hw.logToBlackBox()
         ShotPredictor.ensureLoaded(hardwareMap.appContext)
+        // Model provenance: which detector build + authority modes ran today.
+        BlackBox.event(
+            "nn_model",
+            "version" to NN_MODEL_VERSION,
+            "detectorMode" to NN_DETECTOR_MODE.name,
+            "shotPredictorMode" to SHOT_PREDICTOR_MODE.name,
+        )
+        NeuralReferee.resetStats()
 
         // ---- INIT: pick your alliance before the match starts ----
         // D-pad LEFT = RED, D-pad RIGHT = BLUE. HiveScoring only ever targets
@@ -313,11 +323,22 @@ class BioBuzzAutonomous : LinearOpMode() {
         var blockedSinceNanos = 0L
         val planner = StrategicPlanner()
 
-        intake.spinUp(1.0)
+        // The jam guard OWNS the intake during collection (full speed, coughs
+        // on jams, brakes hard when fully jammed) — a jam can no longer stall
+        // the phase silently.
         while (opModeIsActive() && collected < MAX_BALLS_HELD && System.nanoTime() < deadlineNanos) {
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
             report() // fuses sightings + hive into the WorldModel (and Black Box)
+
+            val guardState = jamGuard.update(spinning = true)
+            if (guardState == IntakeJamGuard.State.JAMMED) {
+                // Repeated coughs failed: stop collecting with what we hold.
+                BlackBox.event("collect_jam_stopped", "balls" to collected)
+                telemetry.addData("COLLECT", "INTAKE JAMMED — ending collection with $collected balls")
+                telemetry.update()
+                break
+            }
 
             val now = System.nanoTime()
             val px = drive.pose.position.x * 2.54
@@ -388,10 +409,11 @@ class BioBuzzAutonomous : LinearOpMode() {
 
             val (distCm, bearingDeg) = target.relativeToRobot(px, py, hdg)
 
-            // ---- 3. opponent dodge: robot blob in the pursuit corridor ----
+            // ---- 3. opponent dodge: a robot blob (live OR velocity-predicted)
+            //      in the pursuit corridor blocks the line ----
             val blocker = ballLocator.visibleRobots().firstOrNull {
                 abs(it.bearingDeg - bearingDeg) < AVOID_ROBOT_BEARING_DEG && it.distanceCm < distCm
-            }
+            } ?: predictedBlocker(px, py, hdg, bearingDeg, distCm, now)
             if (blocker != null) {
                 // Latch the dodge direction once; only give the target up
                 // (and re-approach from a new angle) after a long block.
@@ -476,8 +498,37 @@ class BioBuzzAutonomous : LinearOpMode() {
         }
 
         drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), 0.0))
+        jamGuard.update(spinning = false) // zeroes the intake + resets the guard
         intake.stop()
         return collected
+    }
+
+    /**
+     * A remembered opponent PREDICTED ([DODGE_LOOKAHEAD_SEC] ahead, using the
+     * WorldModel's per-track velocity estimate) to cross the pursuit corridor —
+     * dodges a moving robot before the camera ever sees it there.
+     */
+    private fun predictedBlocker(
+        px: Double,
+        py: Double,
+        hdg: Double,
+        targetBearingDeg: Double,
+        targetDistCm: Double,
+        nowNanos: Long,
+    ): BallTarget? {
+        for (o in world.opponents()) {
+            if (o.ageSec(nowNanos) > WM_ROBOT_MAX_AGE_SEC) continue
+            val fx = o.fieldXcm + o.velXcmPerSec * DODGE_LOOKAHEAD_SEC
+            val fy = o.fieldYcm + o.velYcmPerSec * DODGE_LOOKAHEAD_SEC
+            val dx = fx - px
+            val dy = fy - py
+            val dist = hypot(dx, dy)
+            val bearing = DeadWheelMath.wrapDeg(Math.toDegrees(hdg) - Math.toDegrees(atan2(dy, dx)))
+            if (abs(bearing - targetBearingDeg) < AVOID_ROBOT_BEARING_DEG && dist < targetDistCm) {
+                return BallTarget(o.label, dist, bearing, 0.0, 0.0, 0.0)
+            }
+        }
+        return null
     }
 
     /**
@@ -727,6 +778,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             "RR/FUSED pose",
             "(%.2f, %.2f) %.1f deg".format(p.position.x, p.position.y, Math.toDegrees(hdg)),
         )
+        NeuralReferee.addTelemetry(telemetry)
         vision.addTelemetry(telemetry)
         telemetry.update()
     }

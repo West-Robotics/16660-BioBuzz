@@ -145,7 +145,7 @@ const val AVOID_ROBOT_STRAFE = 0.15        // sidestep power while dodging a blo
 const val CAPTURE_TURN_GAIN = 0.008        // turn power per degree of bearing (rotate toward the ball)
 const val CAPTURE_TURN_MAX_POWER = 0.20    // cap on the turn-toward-ball term
 const val SEARCH_SWEEP_TURN_POWER = 0.12   // in-place sweep when nothing is visible or remembered
-const val AUTONOMY_MATCH_BUDGET_SEC = 30.0 // full autonomous period — the planner's clock frame
+const val AUTONOMY_PERIOD_SEC = 30.0 // full autonomous period — PhaseClock + planner clock frame
 
 // -- Score-loop time budgeting (PhaseClock; see autonomy.kt) --
 const val AUTONOMY_PARK_RESERVE_SEC = 3.0   // ALWAYS reserved for the park move
@@ -160,6 +160,20 @@ const val PICKUP_BUMP_MAX_MS = 450.0        // longer than this is a jam/obstruc
 // -- Dodge anti-oscillation --
 const val DODGE_LATCH_MS = 600.0            // dodge direction latched for this long once chosen
 const val BLOCKED_GIVEUP_MS = 1500.0        // drop the committed target if blocked this long
+const val DODGE_LOOKAHEAD_SEC = 1.0         // predict remembered opponents this far ahead (uses their velocity)
+
+// -- Neural detector hygiene (PRIMARY-mode ghost guard + model versioning) --
+const val NN_MODEL_VERSION = "v0-untrained"  // bump whenever ball_detector.tflite is retrained — logged every match
+const val NN_GHOST_RATE_LIMIT = 0.6          // PRIMARY additions beyond this EMA = demote to REFEREE (hallucinations)
+const val NN_AGREE_EMA_ALPHA = 0.2          // smoothing for the HSV<->NN agreement statistics
+
+// -- Teleop field-centric drive + pose hold (dead wheels / IMU powered) --
+const val TELEOP_FIELD_CENTRIC_DEFAULT = false // start robot-centric; toggle with LEFT STICK BUTTON
+const val TELEOP_POSE_HOLD_DEFAULT = true    // auto-hold position when sticks release; toggle RIGHT STICK BUTTON
+const val TELEOP_INPUT_DEADZONE = 0.08       // sticks inside this count as "released"
+const val TELEOP_HOLD_POSITION_KP = 0.06      // hold correction power per INCH of drift (RR pose is inches)
+const val TELEOP_HOLD_HEADING_KP = 0.02      // hold turn power per degree of heading drift
+const val TELEOP_HOLD_MAX_POWER = 0.25       // cap on any single hold correction
 
 // ================== 3-WHEEL DEAD-WHEEL ODOMETRY (add the pods: ~zero-slip localization) ==================
 // The Road Runner localizer uses these automatically WHEN all three motors exist
@@ -225,7 +239,7 @@ const val FLYWHEEL_PRESPIN_BALL_COUNT = 2 // Start warming the flywheel once we 
 //   * Road Runner drive model/gains      -> roadrunner/MecanumDrive.kt PARAMS
 //   * AprilTag test targets + camera names-> this file (see camera section above)
 
-// -- Ball capacity (single source of truth; StrategicController uses it too) --
+// -- Ball capacity (single source of truth; the WorldModel picker + planner use it) --
 const val MAX_BALLS_HELD = 4            // MEASURE: how many balls the robot can store
 
 // -- Ball point values (keep in sync with NECTAR_SCORE_MULTIPLIER) --

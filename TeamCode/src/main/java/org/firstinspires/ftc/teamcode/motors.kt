@@ -200,8 +200,8 @@ class Drivetrain : Mechanism {
      * helpers call it for you). Velocity control ([driveTeleOp]) is unaffected.
      *
      * (The old body was commented out, which silently ignored every `speed`
-     * argument in this file — DriveOnly's 0.25 nudge, StrategicController's
-     * 0.5/0.8 approach speeds, Experiment's scripted moves.)
+     * argument in this file — DriveOnly's 0.25 nudge, the pursuit moves'
+     * 0.5/0.8 approach speeds, the scripted test-bench moves.)
      */
     fun setSpeed(speed: Double = 1.0) {
         val kp = POSITION_KP * speed.coerceIn(0.0, 1.0)

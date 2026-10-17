@@ -1,14 +1,17 @@
 package org.firstinspires.ftc.teamcode
 
 /**
- * ============ AUTONOMY — the decision stack ============
+ * ============ AUTONOMY CORE — shared by master and the superhuman branch ============
  *
- * One merged home for everything that DECIDES (was shooter.kt,
- * WorldModel.kt, StrategicPlanner.kt, pathfinding.kt):
- *  * [ShooterModel]        — the calibrated RPM-vs-distance curve
- *  * [WorldModel]          — persistent field memory (tracks + hive)
- *  * [StrategicPlanner]     — lookahead + endgame value/cost brain
- *  * [StrategicController] — legacy reactive brain (Pathfinding Test only)
+ * The shared decision substrate — IDENTICAL to master's autonomy.kt, plus
+ * the superhuman-only additions:
+ *  * [PhaseClock]        — the 30s autonomous time budget          (core)
+ *  * [ShooterModel]      — the calibrated RPM-vs-distance curve   (core)
+ *  * [WorldModel]        — persistent field memory (tracks + hive) (core)
+ *  * [StrategicPlanner]  — lookahead + endgame value/cost brain   (superhuman)
+ *
+ * Pure Kotlin — no Android imports — so the JVM unit tests
+ * (src/test/java) can exercise all of it directly.
  */
 
 import java.util.Locale
@@ -18,14 +21,13 @@ import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.sin
+
 // ============================================================================
-// SECTION 1: ShooterModel (was shooter.kt)
+// SECTION 1: PhaseClock — the 30s autonomous budget manager
 // ============================================================================
 
 
 /**
- * ============ PHASE CLOCK — the 30s autonomous budget manager ============
- *
  * The phase machine's own timeouts can sum to more than the autonomous
  * period (9s collect + 6s flower + 4s polish + 8s align + fire > 30s), which
  * historically meant the FMS could kill the OpMode mid-fire and un-parked.
@@ -35,11 +37,12 @@ import kotlin.math.sin
  * cannot finish.
  */
 class PhaseClock(
-    private val periodSec: Double = AUTONOMY_MATCH_BUDGET_SEC,
+    private val periodSec: Double = AUTONOMY_PERIOD_SEC,
+    private val nowNanos: () -> Long = System::nanoTime,
 ) {
-    private val startNanos = System.nanoTime()
+    private val startNanos = nowNanos()
 
-    fun elapsedSec(): Double = (System.nanoTime() - startNanos) / 1e9
+    fun elapsedSec(): Double = (nowNanos() - startNanos) / 1e9
 
     /** Seconds left in the autonomous period. */
     fun remainingSec(): Double = (periodSec - elapsedSec()).coerceAtLeast(0.0)
@@ -55,10 +58,14 @@ class PhaseClock(
      */
     fun deadlineNanos(phaseTimeoutMs: Double, reserveSec: Double = 0.0): Long {
         val availableMs = (remainingSec() - reserveSec) * 1e3
-        if (availableMs <= 0.0) return System.nanoTime()
-        return System.nanoTime() + (minOf(phaseTimeoutMs, availableMs) * 1e6).toLong()
+        if (availableMs <= 0.0) return nowNanos()
+        return nowNanos() + (minOf(phaseTimeoutMs, availableMs) * 1e6).toLong()
     }
 }
+
+// ============================================================================
+// SECTION 2: ShooterModel (was shooter.kt)
+// ============================================================================
 
 /**
  * ============ SHOOTER MODEL — flywheel RPM vs. landing distance ============
@@ -134,26 +141,9 @@ object ShooterModel {
 }
 
 // ============================================================================
-// SECTION 2: WorldModel (was WorldModel.kt)
+// SECTION 4: WorldModel (was WorldModel.kt)
 // ============================================================================
 
-
-/**
- * ============ WORLD MODEL — the robot's persistent field memory ============
- *
- * A human forgets a ball the moment it leaves view; the robot doesn't have to.
- * Every sighting (balls, flowers, opponent robots, the hive) is fused into
- * FIELD coordinates (when a pose is available) and kept as a track with:
- *   * position + velocity (for opponents),
- *   * a CONFIDENCE that decays smoothly while unseen and jumps back on
- *     re-sighting — objects are remembered for WM_*_MAX_AGE_SEC, never
- *     instantly forgotten.
- *
- * Coordinates: Road Runner field frame in CENTIMETERS (+x forward, +y left,
- * heading CCW, origin at the autonomous start pose). Without a pose (teleop
- * shadow mode) tracks live in a rolling robot-relative frame — association
- * still works, absolute memory doesn't.
- */
 data class Sighting(
     val label: String,
     /** Straight-line distance from the robot, cm. */
@@ -353,29 +343,64 @@ class WorldModel {
             if (hive() != null) "yes(%.0f%%)".format(hiveConfidence * 100) else "no",
         )
 
-    /** Dumps the whole world model to the Black Box (called ~10 Hz). */
-    fun logToBlackBox() {
-        BlackBox.log(
-            "record" to "wm",
-            "balls" to balls().map {
-                mapOf("id" to it.id, "x" to it.fieldXcm, "y" to it.fieldYcm,
-                      "lbl" to it.label, "conf" to it.confidence)
-            },
-            "opp" to opponents().map {
-                mapOf("id" to it.id, "x" to it.fieldXcm, "y" to it.fieldYcm,
-                      "conf" to it.confidence, "vx" to it.velXcmPerSec, "vy" to it.velYcmPerSec)
-            },
-            "flowers" to flowers().map {
-                mapOf("id" to it.id, "x" to it.fieldXcm, "y" to it.fieldYcm, "conf" to it.confidence)
-            },
-            "hiveX" to (if (hive() != null) hiveXcm else null),
-            "hiveY" to (if (hive() != null) hiveYcm else null),
-            "hiveConf" to hiveConfidence,
-        )
+    /**
+     * Serializable snapshot of the whole model — the Black-Box recorder (the
+     * superhuman branch) logs this ~10 Hz; core master never calls it.
+     */
+    fun logPayload(): Map<String, Any?> = mapOf(
+        "balls" to balls().map {
+            mapOf("id" to it.id, "x" to it.fieldXcm, "y" to it.fieldYcm,
+                  "lbl" to it.label, "conf" to it.confidence)
+        },
+        "opp" to opponents().map {
+            mapOf("id" to it.id, "x" to it.fieldXcm, "y" to it.fieldYcm,
+                  "conf" to it.confidence, "vx" to it.velXcmPerSec, "vy" to it.velYcmPerSec)
+        },
+        "flowers" to flowers().map {
+            mapOf("id" to it.id, "x" to it.fieldXcm, "y" to it.fieldYcm, "conf" to it.confidence)
+        },
+        "hiveX" to (if (hive() != null) hiveXcm else null),
+        "hiveY" to (if (hive() != null) hiveYcm else null),
+        "hiveConf" to hiveConfidence,
+    )
+
+    /**
+     * Chase utility of a ball track (same shape as the old BallLocator
+     * utility, confidence-weighted; live sightings beat stale ones).
+     */
+    fun chaseUtilityOf(track: TrackedObject, robotXcm: Double, robotYcm: Double, nowNanos: Long): Double {
+        val distCm = track.distanceTo(robotXcm, robotYcm)
+        val visibility = if (track.ageSec(nowNanos) <= WM_VISIBLE_FRESH_SEC) 1.0 else 0.75
+        return track.value * track.confidence * PRIORITY_VALUE_WEIGHT *
+            visibility / (1.0 + (distCm / 100.0) * PRIORITY_DISTANCE_WEIGHT)
+    }
+
+    /**
+     * Capacity-aware chase pick for the COLLECT phase (the core target
+     * selector; the superhuman branch's StrategicPlanner overrides this
+     * with lookahead + opponent discounting):
+     *  - fresh-enough sighting of a solid-enough blob only,
+     *  - exactly one slot left -> highest-value ball outright when
+     *    LAST_SLOT_PREFER_HIGHEST_VALUE is set, else highest utility.
+     */
+    fun bestBallToChase(robotXcm: Double, robotYcm: Double, remainingSlots: Int, nowNanos: Long): TrackedObject? {
+        if (remainingSlots <= 0) return null
+        val candidates = balls().filter {
+            it.ageSec(nowNanos) <= DEAD_RECKON_MAX_AGE_SEC && it.lastAreaPx >= CHASE_MIN_CONTOUR_AREA_PX
+        }
+        if (candidates.isEmpty()) return null
+        return if (remainingSlots == 1 && LAST_SLOT_PREFER_HIGHEST_VALUE) {
+            candidates.maxWithOrNull(
+                compareBy<TrackedObject> { it.value }.thenBy { it.distanceTo(robotXcm, robotYcm) },
+            )
+        } else {
+            candidates.maxByOrNull { chaseUtilityOf(it, robotXcm, robotYcm, nowNanos) }
+        }
     }
 }
+
 // ============================================================================
-// SECTION 3: StrategicPlanner (was StrategicPlanner.kt)
+// SECTION 5: StrategicPlanner (was StrategicPlanner.kt) — SUPERHUMAN-ONLY
 // ============================================================================
 
 
@@ -552,265 +577,5 @@ class StrategicPlanner {
             "timeRemainingSec" to timeRemainingSec,
             "why" to d.rationale,
         )
-    }
-}
-// ============================================================================
-// SECTION 4: StrategicController (was pathfinding.kt — legacy, Pathfinding Test OpMode only)
-// ============================================================================
-
-
-/**
- * The StrategicController is the "brain" of the robot during autonomous.
- * It maintains a map of the field, prioritizes balls, and decides when to switch
- * from collecting to scoring based on game logic and efficiency heuristics.
- */
-class StrategicController(
-    private val vision: VisionSystem,
-    private val drivetrain: Drivetrain,
-    private val flywheel: FlyWheel,
-) {
-
-    // 1. STATE
-    private var pollenCount = 0
-    private var nectarCount = 0
-    private var unknownBallCount = 0
-    private var hivePosition: Pair<Double, Double>? = null // (X, Y) in cm relative to last known origin
-
-    enum class Strategy { COLLECT_BALLS, GO_TO_HIVE, SHOOT, AVOID_ROBOT }
-    private var currentStrategy = Strategy.COLLECT_BALLS
-
-    // This is our "plan" for the next action
-    data class Target(
-        val label: String,
-        val angleDeg: Double,
-        val distanceCm: Double
-    )
-    private var currentTarget: Target? = null
-
-    // 2. CONSTANTS (from globals.kt)
-    private val MAX_BALLS = MAX_BALLS_HELD
-    private val HIVE_RANGE_CM = 60.0 // If closer than this, just score
-
-    // ===== Ball Counting API =====
-    // Anything that detects a ball entering the robot (vision intake zone,
-    // beam-break sensor, touch sensor, etc.) calls one of these.
-    // UNKNOWN is used when the source cannot identify the type (e.g. beam-break).
-    fun onBallCollected(type: BallType) {
-        when (type) {
-            BallType.POLLEN -> pollenCount++
-            BallType.NECTAR -> nectarCount++
-            BallType.UNKNOWN -> unknownBallCount++
-        }
-    }
-
-    // Convenience overload for vision-based sources that know the label.
-    fun onBallCollected(label: String) {
-        when {
-            label.contains("Pollen") -> pollenCount++
-            label.contains("Nectar") -> nectarCount++
-            else -> unknownBallCount++
-        }
-    }
-
-    /** Total balls currently held, regardless of type. */
-    fun ballCount(): Int = pollenCount + nectarCount + unknownBallCount
-
-    /** How many Pollen (yellow) balls are held. */
-    fun pollenCount(): Int = pollenCount
-
-    /** How many Nectar (red/blue) balls are held. */
-    fun nectarCount(): Int = nectarCount
-
-    /** How many balls of unidentified type are held. */
-    fun unknownBallCount(): Int = unknownBallCount
-
-    /** Clears all ball counts (e.g. after firing a full payload). */
-    fun resetBallCount() {
-        pollenCount = 0
-        nectarCount = 0
-        unknownBallCount = 0
-    }
-
-    /**
-     * Main update loop. Called every cycle by the OpMode.
-     * 1. Update field position from AprilTags.
-     * 2. Check for enemy robots.
-     * 3. Re-evaluate strategy.
-     * 4. Issue drive commands.
-     */
-    fun update() {
-        val detections = vision.getAllDetections()
-        updateHivePosition(detections)
-
-        // Preemptive flywheel: if shooting is *plausible*, keep the flywheel hot.
-        if (ballCount() >= FLYWHEEL_PRESPIN_BALL_COUNT || currentStrategy == Strategy.GO_TO_HIVE) {
-            requestFlywheelSpinup()
-        }
-
-        when (currentStrategy) {
-            Strategy.COLLECT_BALLS -> updateCollection(detections)
-            Strategy.GO_TO_HIVE -> updateTravelToHive()
-            Strategy.SHOOT -> performShot()
-            Strategy.AVOID_ROBOT -> handleAvoidance()
-        }
-    }
-
-    /**
-     * Preemptive flywheel spin-up. If we can see the hive, pre-spin to the RPM
-     * the calibrated curve says our current distance needs; otherwise hold
-     * the wheels at the PRIME speed so a later real spin-up is just a short
-     * hop. (The flywheel is injected by the constructing OpMode.)
-     */
-    private fun requestFlywheelSpinup() {
-        val dist = hivePosition?.let { hypot(it.first, it.second) }
-        flywheel.spinToRpm(dist?.let { ShooterModel.rpmForDistance(it) } ?: FLYWHEEL_PRIME_RPM)
-    }
-
-    /**
-     * Calculates the relative position of the hive and converts it to a field coordinate.
-     */
-    private fun updateHivePosition(detections: List<VisionSystem.Detection>) {
-        // "Hive Tag N" (single-tag library) or "Hive Cluster RED SCORING" (SDK 12.0 game library).
-        val hiveTags = detections.filter { it.label.startsWith("Hive") }
-        if (hiveTags.isNotEmpty()) {
-            val tag = hiveTags.first()
-            // Convert the camera-relative pose to a global target.
-            // For simplicity, we treat the camera pose as the field pose.
-            // A real implementation would use full odometry.
-            hivePosition = Pair(tag.xMm / 10.0, tag.yMm / 10.0)
-        }
-    }
-
-    /**
-     * Heuristic: Finds the best ball to chase.
-     * Score = (Alliance Bonus) / (Distance + 1).
-     * This is a greedy algorithm: it picks the single best target, not brute-forcing all paths.
-     */
-    private fun findBestBall(detections: List<VisionSystem.Detection>): VisionSystem.Detection? {
-        val balls = detections.filter { it.label.contains("Pollen") || it.label.contains("Nectar") }
-        if (balls.isEmpty()) return null
-
-        return balls.maxByOrNull { ball ->
-            // Closer balls are better (distance in cm)
-            val distanceScore = 1.0 / (ball.distanceMm / 10.0 + 1.0)
-            // Nectar is worth more points
-            val allianceBonus = when {
-                ball.label.contains("Nectar") -> NECTAR_SCORE_MULTIPLIER
-                else -> 1.0
-            }
-            distanceScore * allianceBonus
-        }
-    }
-
-    /**
-     * LOGIC: Decide if we should keep collecting or switch to scoring.
-     */
-    private fun updateCollection(detections: List<VisionSystem.Detection>) {
-        val ballCount = ballCount()
-
-        // 1. Check Ball Count Trigger
-        if (ballCount >= MAX_BALLS) {
-            if (hivePosition != null) {
-                currentStrategy = Strategy.GO_TO_HIVE
-                return
-            }
-        }
-
-        // 2. Check Proximity Trigger
-        if (hivePosition != null) {
-            val distToHive = hypot(hivePosition!!.first, hivePosition!!.second)
-            if (distToHive < HIVE_RANGE_CM) {
-                currentStrategy = Strategy.SHOOT
-                return
-            }
-        }
-
-        // 3. Check Efficiency Breakpoint
-        // NOTE: The flywheel spins up *in parallel* with travel (preemptive spin-up),
-        // so spin-up time is NOT added as a serial cost here.
-        // If we have balls and the next ball takes longer to reach than the hive does, go score.
-        val bestBall = findBestBall(detections)
-        if (hivePosition != null) {
-            val timeToHive = hypot(hivePosition!!.first, hivePosition!!.second) / ROBOT_SPEED_CM_PER_SEC
-
-            if (bestBall != null) {
-                val timeToBall = (bestBall.distanceMm / 10.0) / ROBOT_SPEED_CM_PER_SEC
-                if (ballCount > 0 && timeToBall > timeToHive) {
-                    currentStrategy = Strategy.GO_TO_HIVE
-                    return
-                }
-            }
-        }
-
-        // 4. Check for Enemy Robots
-        val enemyRobots = detections.filter { it.label.contains("Robot") }
-        if (enemyRobots.isNotEmpty()) {
-            if (bestBall != null && enemyRobots.any { isRobotInPath(it, bestBall) }) {
-                currentTarget = null // Invalidate target to force a re-route next cycle
-            }
-        }
-
-        // 5. Continue Collecting
-        val target = currentTarget ?: bestBall?.let {
-            Target(it.label, it.angleDegrees, it.distanceMm / 10.0)
-        }
-
-        if (target != null) {
-            currentTarget = target
-            // Use driveAtAngle to move towards the target
-            // Note: driveAtAngle moves relative to robot; we assume robot faces forward for now.
-            drivetrain.driveAtAngle(target.distanceCm, target.angleDeg, 0.5)
-        } else if (hivePosition != null) {
-            // No balls visible, might as well head to the hive if we have some
-            if (ballCount > 0) currentStrategy = Strategy.GO_TO_HIVE
-        }
-    }
-
-    private fun updateTravelToHive() {
-        val hive = hivePosition
-        if (hive != null) {
-            val dist = hypot(hive.first, hive.second)
-            val angle = atan2(hive.first, hive.second) * 180.0 / Math.PI
-
-            if (dist < HIVE_RANGE_CM) {
-                currentStrategy = Strategy.SHOOT
-            } else {
-                // Drive to the hive
-                drivetrain.driveAtAngle(dist, angle, 0.8)
-            }
-        } else {
-            // Lost sight of hive, fall back to collecting
-            currentStrategy = Strategy.COLLECT_BALLS
-        }
-    }
-
-    private fun performShot() {
-        // Command the calibrated shooting speed for our current hive distance
-        // (full speed if uncalibrated / hive lost). The match OpMode's fire
-        // sequence only feeds balls once BOTH wheels are at speed
-        // (FlyWheel.isAtSpeed) — this brain just picks the power level.
-        val dist = hivePosition?.let { hypot(it.first, it.second) }
-        flywheel.spinToRpm(dist?.let { ShooterModel.rpmForDistance(it) } ?: FLYWHEEL_MOTOR_MAX_RPM)
-
-        // After the shot, reset counts.
-        resetBallCount()
-        currentStrategy = Strategy.COLLECT_BALLS
-    }
-
-    private fun handleAvoidance() {
-        // Simple avoidance: re-activate collection logic which will re-evaluate targets.
-        currentStrategy = Strategy.COLLECT_BALLS
-    }
-
-    private fun isRobotInPath(robot: VisionSystem.Detection, ball: VisionSystem.Detection): Boolean {
-        // Simple check: if the robot is close to the line between us and the ball.
-        val angleDiff = abs(robot.angleDegrees - ball.angleDegrees)
-        val robotDist = robot.distanceMm / 10.0
-        val ballDist = ball.distanceMm / 10.0
-        return angleDiff < 15.0 && robotDist < ballDist
-    }
-
-    fun getTelemetry(): String {
-        return "Strategy: $currentStrategy | Balls: ${ballCount()} (P:$pollenCount N:$nectarCount U:$unknownBallCount) | Target: ${currentTarget?.label ?: "None"}"
     }
 }

@@ -253,7 +253,10 @@ object NeuralReferee {
 
     /**
      * Applies the authority ladder to the HSV pipeline's targets. Called from
-     * BallLocator.visibleTargets().
+     * BallLocator.visibleTargets(). In PRIMARY mode, a sustained ghost rate
+     * (detector-only additions the HSV pipeline never sees) auto-demotes to
+     * REFEREE for the rest of the OpMode — an untrained or regressed model
+     * can hallucinate balls, and the pursuit would faithfully chase them.
      */
     fun filter(targets: List<BallTarget>): List<BallTarget> {
         if (NN_DETECTOR_MODE == NnMode.OFF || NN_DETECTOR_MODE == NnMode.ADVISORY) {
@@ -265,7 +268,14 @@ object NeuralReferee {
 
         val kept = targets.filter { corroborated(it) }
 
-        if (NN_DETECTOR_MODE == NnMode.REFEREE) {
+        // Agreement statistic: how many HSV blobs the referee removed
+        // (a HIGH rate means either HSV hallucinates or the NN is blind).
+        val a = NN_AGREE_EMA_ALPHA
+        hsvKilledEma += a * (
+            (targets.size - kept.size).toDouble() / targets.size.coerceAtLeast(1) - hsvKilledEma
+            )
+
+        if (NN_DETECTOR_MODE == NnMode.REFEREE || demoted) {
             return kept
         }
 
@@ -274,7 +284,58 @@ object NeuralReferee {
             .filter { d -> d.labelId in NN_LABELS.indices && d.label != "?" }
             .filter { d -> targets.none { t -> sameLabel(d, t) && insideBox(t.screenX, t.screenY, d) } }
             .map { d -> d.toBallTarget() }
+
+        // Ghost statistic: detector-only additions / total NN detections.
+        ghostEma += a * (additions.size.toDouble() / latestList.size.coerceAtLeast(1) - ghostEma)
+        if (!demoted && ghostEma > NN_GHOST_RATE_LIMIT) {
+            demoted = true
+            BlackBox.event(
+                "nn_demoted",
+                "ghostRate" to ghostEma,
+                "limit" to NN_GHOST_RATE_LIMIT,
+                "modelVersion" to NN_MODEL_VERSION,
+            )
+            return kept // behave as REFEREE from here on
+        }
         return kept + additions
+    }
+
+    // ---- agreement / ghost statistics (PRIMARY safety + telemetry) ----
+
+    /** EMA of detector-only additions as a fraction of all NN detections. */
+    private var ghostEma = 0.0
+
+    /** EMA of HSV blobs the referee removed as a fraction of all HSV blobs. */
+    private var hsvKilledEma = 0.0
+
+    /** PRIMARY -> REFEREE auto-demotion latch (per OpMode run). */
+    private var demoted = false
+
+    fun ghostRate(): Double = ghostEma
+
+    fun hsvKilledRate(): Double = hsvKilledEma
+
+    fun autoDemoted(): Boolean = demoted
+
+    fun modeName(): String =
+        if (demoted) "PRIMARY->REFEREE (auto-demoted)" else NN_DETECTOR_MODE.name
+
+    /** Live agreement stats for the Driver Station. */
+    fun addTelemetry(t: org.firstinspires.ftc.robotcore.external.Telemetry) {
+        t.addData("NN mode", modeName())
+        t.addData(
+            "NN referee",
+            "ghost %.0f%% | HSV-killed %.0f%% | %s".format(
+                ghostEma * 100, hsvKilledEma * 100, if (fresh()) "fresh" else "asleep",
+            ),
+        )
+    }
+
+    /** Resets the per-run statistics (called at OpMode start). */
+    fun resetStats() {
+        ghostEma = 0.0
+        hsvKilledEma = 0.0
+        demoted = false
     }
 
     private fun corroborated(t: BallTarget): Boolean =

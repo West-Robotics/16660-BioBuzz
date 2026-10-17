@@ -233,3 +233,11 @@ class FrameGrabProcessor(private val camera: String) : VisionProcessor {
     ) {
     }
 }
+/**
+ * SUPERHUMAN-ONLY: dumps the core [WorldModel]'s snapshot to the Black Box
+ * (~10 Hz). The core class stays Black-Box-free (identical to master); the
+ * branch adds the logging as an extension so every call site is unchanged.
+ */
+fun WorldModel.logToBlackBox() {
+    BlackBox.log(*(listOf("record" to "wm") + logPayload().map { (k, v) -> k to v }).toTypedArray())
+}
