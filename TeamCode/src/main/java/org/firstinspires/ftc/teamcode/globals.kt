@@ -104,10 +104,15 @@ const val AUTONOMOUS_COLLECT_TIMEOUT_MS = 9000.0 // hard cap on the collection p
 const val PICKUP_CONFIRM_CM = 25.0   // ball closer than this can count as picked up
 const val PICKUP_SETTLE_MS = 400.0    // must stay that close this long to confirm
 
-// -- Ball pursuit upgrades (used by BallMemory + the COLLECT phase; see pathfinding.kt) --
-const val BALL_MEMORY_MATCH_CM = 15.0      // re-associate a sighting with a remembered ball within this radius
-const val BALL_MEMORY_MAX_AGE_SEC = 8.0    // unseen remembered ball is dropped from the map after this
-const val BALL_MEMORY_EMA_ALPHA = 0.4      // position/range smoothing on re-sight (0..1, higher = trust newer)
+// -- World-model memory (WorldModel; the core ball/flower/opponent/hive map) --
+const val WM_TRACK_MATCH_CM = 40.0      // max distance to re-associate a sighting with a track
+const val WM_BALL_MAX_AGE_SEC = 45.0   // how long an unseen ball stays remembered
+const val WM_ROBOT_MAX_AGE_SEC = 6.0   // opponents are assumed to have moved by then
+const val WM_CONFIDENCE_TAU_SEC = 10.0  // confidence decay time constant
+const val WM_TRACK_EMA_ALPHA = 0.4     // track position smoothing on re-sight (0..1, higher = trust newer)
+const val WM_VISIBLE_FRESH_SEC = 0.3    // a track re-sighted within this is "visible now"
+
+// -- Ball pursuit upgrades (used by the COLLECT phase; see WorldModel) --
 const val DEAD_RECKON_MAX_AGE_SEC = 3.0    // chase an unseen ball's remembered spot for at most this long
 const val CHASE_MIN_CONTOUR_AREA_PX = 350.0 // smaller/farther blobs are remembered but not chased
 const val TARGET_SWITCH_MARGIN = 1.5       // a new ball must beat the committed one's utility by this factor
@@ -116,6 +121,10 @@ const val AVOID_ROBOT_STRAFE = 0.15         // sidestep power while dodging a bl
 const val CAPTURE_TURN_GAIN = 0.008         // turn power per degree of bearing (rotate toward the ball)
 const val CAPTURE_TURN_MAX_POWER = 0.20     // cap on the turn-toward-ball term
 const val SEARCH_SWEEP_TURN_POWER = 0.12    // in-place sweep when nothing is visible or remembered
+
+// -- Shot confirmation (flywheel RPM dip when a ball launches) --
+const val SHOT_DIP_THRESHOLD_RPM = 250.0 // dip below baseline that counts as a shot
+const val SHOT_DETECT_WINDOW_MS = 900.0   // how long after feeding we watch for the dip
 
 // -- Pickup confirmation via intake motor current (a real ball-load signature) --
 const val PICKUP_CURRENT_BUMP_A = 1.5       // MEASURE: current rise over baseline when a ball enters
@@ -126,8 +135,13 @@ const val PICKUP_BUMP_MAX_MS = 450.0        // longer than this is a jam/obstruc
 const val DODGE_LATCH_MS = 600.0            // dodge direction latched for this long once chosen
 const val BLOCKED_GIVEUP_MS = 1500.0        // drop the committed target if blocked this long
 
-// -- Hive memory (dead-reckon toward the hive when the tag flickers out of view) --
-const val HIVE_MEMORY_MAX_AGE_SEC = 12.0    // remembered hive position trusted for this long
+// -- Teleop field-centric drive + pose hold (dead wheels / IMU powered) --
+const val TELEOP_FIELD_CENTRIC_DEFAULT = false // start robot-centric; toggle with LEFT STICK BUTTON
+const val TELEOP_POSE_HOLD_DEFAULT = true    // auto-hold position when sticks release; toggle RIGHT STICK BUTTON
+const val TELEOP_INPUT_DEADZONE = 0.08       // sticks inside this count as "released"
+const val TELEOP_HOLD_POSITION_KP = 0.06      // hold correction power per INCH of drift (RR pose is inches)
+const val TELEOP_HOLD_HEADING_KP = 0.02      // hold turn power per degree of heading drift
+const val TELEOP_HOLD_MAX_POWER = 0.25       // cap on any single hold correction
 
 // ================== AUTONOMY TIME BUDGET (the 30s period is managed, not hoped for) ==================
 const val AUTONOMY_PERIOD_SEC = 30.0       // full autonomous period

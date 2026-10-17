@@ -357,6 +357,9 @@ class FlyWheel : Mechanism {
     /** Measured RIGHT wheel speed from the encoder, in RPM. */
     fun measuredRightRpm(): Double = flyWheelRight.encoderVelocity.into(RotationsPerMinute)
 
+    /** Average measured speed of the wheels, RPM (used by [ShotDetector]). */
+    fun measuredAverageRpm(): Double = (measuredLeftRpm() + measuredRightRpm()) / 2.0
+
     /**
      * True when BOTH wheels are within [toleranceRpm] of [targetRpm]. This is
      * the "safe to fire" check — launching on slow wheels is a short shot.
@@ -364,5 +367,65 @@ class FlyWheel : Mechanism {
     fun isAtSpeed(targetRpm: Double, toleranceRpm: Double = FLYWHEEL_SPEED_TOLERANCE_RPM): Boolean =
         kotlin.math.abs(measuredLeftRpm() - targetRpm) <= toleranceRpm &&
             kotlin.math.abs(measuredRightRpm() - targetRpm) <= toleranceRpm
+}
+
+/**
+ * ============ SHOT DETECTOR — "did we actually shoot?" ============
+ *
+ * Confirms each fired ball from the FLYWHEEL ENCODERS: a ball hitting the
+ * spinning wheels briefly loads them, so measured RPM dips and recovers.
+ * Arm right after a feed pulse (intake) or loader stroke; a dip below
+ * [SHOT_DIP_THRESHOLD_RPM] from the at-fire baseline within
+ * [SHOT_DETECT_WINDOW_MS] = CONFIRMED, else MISSED.
+ *
+ * Core class (identical on both branches); the superhuman branch logs the
+ * verdicts to the Black Box at the call site.
+ */
+class ShotDetector(private val flywheel: FlyWheel) {
+
+    enum class State { IDLE, ARMED, CONFIRMED, MISSED }
+
+    var state = State.IDLE
+        private set
+    var lastDipRpm = 0.0
+        private set
+
+    private var baselineRpm = 0.0
+    private var minRpm = Double.MAX_VALUE
+    private var windowEndNanos = 0L
+    private var confirmedCount = 0
+
+    /** Average measured speed of the wheels, RPM. */
+    fun measuredRpm(): Double = flywheel.measuredAverageRpm()
+
+    /** Arms dip detection. Call immediately after feeding a ball. */
+    fun arm() {
+        baselineRpm = measuredRpm()
+        minRpm = Double.MAX_VALUE
+        windowEndNanos = System.nanoTime() + (SHOT_DETECT_WINDOW_MS * 1e6).toLong()
+        state = State.ARMED
+    }
+
+    /** Call every loop tick while ARMED. Transitions only via the dip/timeout. */
+    fun update(): State {
+        if (state != State.ARMED) return state
+        val rpm = measuredRpm()
+        if (rpm < minRpm) minRpm = rpm
+
+        if (minRpm < baselineRpm - SHOT_DIP_THRESHOLD_RPM) {
+            state = State.CONFIRMED
+            lastDipRpm = baselineRpm - minRpm
+            confirmedCount++
+        } else if (System.nanoTime() >= windowEndNanos) {
+            state = State.MISSED
+        }
+        return state
+    }
+
+    fun totalConfirmed(): Int = confirmedCount
+
+    fun idle() {
+        state = State.IDLE
+    }
 }
 

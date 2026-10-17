@@ -67,13 +67,8 @@ class BioBuzzAutonomous : LinearOpMode() {
     private lateinit var clock: PhaseClock
     private lateinit var pickupSensor: PickupCurrentSensor
 
-    /** Field memory of balls/flowers — PERSISTS across score cycles. */
-    private val ballMemory = BallMemory()
-
-    /** Remembered hive position (field cm) for tag-flicker dead reckoning. */
-    private var hiveMemXcm = 0.0
-    private var hiveMemYcm = 0.0
-    private var hiveMemSeenNanos = 0L
+    /** Field memory of balls/flowers/opponents/hive — PERSISTS across score cycles. */
+    private val world = WorldModel()
 
     override fun runOpMode() {
         // ================= initialize =================
@@ -134,7 +129,7 @@ class BioBuzzAutonomous : LinearOpMode() {
 
         clock = PhaseClock()
         pickupSensor = PickupCurrentSensor(intake)
-        ballMemory.clear()
+        world.clear()
 
         try {
             // ---- THE SCORE LOOP: keep cycling while a full cycle fits ----
@@ -301,37 +296,36 @@ class BioBuzzAutonomous : LinearOpMode() {
             val now = System.nanoTime()
             val robotXcm = drive.pose.position.x * 2.54
             val robotYcm = drive.pose.position.y * 2.54
+            val hdg = drive.pose.heading.toDouble()
 
-            // 1. fuse sightings into the field-frame ball map
-            ballMemory.absorb(ballLocator.visibleTargets(), drive.pose, now)
             val robots = ballLocator.visibleRobots()
             val bumped = pickupSensor.update(spinning = true)
-            report()
+            report() // fuses sightings + hive into the WorldModel
 
             // 2. commitment with switch hysteresis
-            val committed = committedId?.let { ballMemory.byId(it) }
-            val best = ballMemory.best(robotXcm, robotYcm, MAX_BALLS_HELD - collected, now)
+            val committed = committedId?.let { world.trackById(it) }
+            val best = world.bestBallToChase(robotXcm, robotYcm, MAX_BALLS_HELD - collected, now)
             if (committed == null) {
                 committedId = best?.id
             } else if (best != null && best.id != committed.id &&
-                ballMemory.utilityOf(best, robotXcm, robotYcm) >
-                ballMemory.utilityOf(committed, robotXcm, robotYcm) * TARGET_SWITCH_MARGIN
+                world.chaseUtilityOf(best, robotXcm, robotYcm, now) >
+                world.chaseUtilityOf(committed, robotXcm, robotYcm, now) * TARGET_SWITCH_MARGIN
             ) {
                 committedId = best.id
             }
-            val target = committedId?.let { ballMemory.byId(it) }
+            val target = committedId?.let { world.trackById(it) }
 
             if (target == null) {
                 // 6. nothing worth chasing: sweep-search in place
                 closeSinceNanos = 0L
                 dodgeSign = 0
-                telemetry.addData("COLLECT", "no target — sweep | map: ${ballMemory.summary(now)}")
+                telemetry.addData("COLLECT", "no target — sweep | ${world.summary()}")
                 telemetry.update()
                 drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), -SEARCH_SWEEP_TURN_POWER))
                 continue
             }
 
-            val (distCm, bearingDeg) = ballMemory.relativeTo(target, drive.pose)
+            val (distCm, bearingDeg) = target.relativeToRobot(robotXcm, robotYcm, hdg)
 
             // 3. opponent dodge: a robot blob in the pursuit corridor blocks the line
             val blocker = robots.firstOrNull {
@@ -381,11 +375,12 @@ class BioBuzzAutonomous : LinearOpMode() {
                 .coerceIn(-CAPTURE_TURN_MAX_POWER, CAPTURE_TURN_MAX_POWER)
             drive.setDrivePowers(PoseVelocity2d(Vector2d(forward, strafe), turn))
 
+            val live = target.ageSec(now) <= WM_VISIBLE_FRESH_SEC
             telemetry.addData(
                 "COLLECT $collected/$MAX_BALLS_HELD",
                 "%s %.0fcm %+.1fdeg %s".format(
                     target.label, distCm, bearingDeg,
-                    if (target.visibleNow) "[live]" else "[memory]",
+                    if (live) "[live]" else "[memory]",
                 ),
             )
             telemetry.update()
@@ -408,7 +403,7 @@ class BioBuzzAutonomous : LinearOpMode() {
 
             if (bumpPickup || settled) {
                 collected++
-                ballMemory.remove(target.id)
+                world.removeBall(target.id)
                 committedId = null
                 closeSinceNanos = 0L
                 telemetry.addData(
@@ -438,13 +433,16 @@ class BioBuzzAutonomous : LinearOpMode() {
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
             val now = System.nanoTime()
-
-            ballMemory.absorb(ballLocator.visibleTargets(), drive.pose, now)
-            report()
+            val px = drive.pose.position.x * 2.54
+            val py = drive.pose.position.y * 2.54
+            val hdg = drive.pose.heading.toDouble()
+            report() // fuses sightings into the WorldModel (flowers included)
 
             val live = ballLocator.nearestFlower()
             val remembered = if (live == null) {
-                ballMemory.bestFlower(drive.pose.position.x * 2.54, drive.pose.position.y * 2.54, now)
+                world.flowers()
+                    .filter { it.ageSec(now) <= DEAD_RECKON_MAX_AGE_SEC }
+                    .minByOrNull { it.distanceTo(px, py) }
             } else {
                 null
             }
@@ -457,7 +455,7 @@ class BioBuzzAutonomous : LinearOpMode() {
                 bearingDeg = live.bearingDeg
                 liveNow = true
             } else if (remembered != null) {
-                val rel = ballMemory.relativeTo(remembered, drive.pose)
+                val rel = remembered.relativeToRobot(px, py, hdg)
                 distCm = rel.first
                 bearingDeg = rel.second
                 liveNow = false
@@ -510,30 +508,23 @@ class BioBuzzAutonomous : LinearOpMode() {
         while (opModeIsActive() && System.nanoTime() < deadlineNanos) {
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
-            val now = System.nanoTime()
 
             val target = hive.update()
             tagOverlay.publish(target)
-            report(target)
-
-            if (target != null) {
-                // Refresh the remembered hive position in field coordinates.
-                val (hx, hy) = fieldPosOf(target.distanceCm, target.bearingDeg)
-                hiveMemXcm = hx
-                hiveMemYcm = hy
-                hiveMemSeenNanos = now
-            }
+            report(target) // also refreshes the WorldModel's hive memory
 
             if (target == null) {
-                val hiveAgeSec = if (hiveMemSeenNanos == 0L) Double.MAX_VALUE else (now - hiveMemSeenNanos) / 1e9
-                if (hiveAgeSec <= HIVE_MEMORY_MAX_AGE_SEC) {
+                val rememberedHive = if (world.hiveConfidence() >= 0.2) world.hive() else null
+                if (rememberedHive != null) {
                     // Dead-reckon toward the remembered hive: translate toward
                     // it while turning to sweep the tag back into view.
-                    val dx = hiveMemXcm - drive.pose.position.x * 2.54
-                    val dy = hiveMemYcm - drive.pose.position.y * 2.54
+                    val px = drive.pose.position.x * 2.54
+                    val py = drive.pose.position.y * 2.54
+                    val hdg = drive.pose.heading.toDouble()
+                    val dx = rememberedHive.first - px
+                    val dy = rememberedHive.second - py
                     val distCm = hypot(dx, dy)
-                    val bearingDeg = Math.toDegrees(drive.pose.heading.toDouble() - atan2(dy, dx))
-                    val wrapped = ((bearingDeg + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
+                    val wrapped = ((Math.toDegrees(hdg) - Math.toDegrees(atan2(dy, dx)) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
 
                     val forward = (HiveScoringConfig.RANGE_GAIN *
                         (distCm - HiveScoringConfig.RANGE_CENTER_CM))
@@ -594,6 +585,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         }
 
         var fired = 0
+        val detector = ShotDetector(flywheel)
         for (i in 1..ballCount) {
             if (!opModeIsActive()) break
             // Re-verify at speed before EVERY ball (each ball slows the wheels).
@@ -610,33 +602,53 @@ class BioBuzzAutonomous : LinearOpMode() {
             intake.spinUp(1.0)
             sleep(FLYWHEEL_FEED_TIME_MS.toLong())
             intake.stop()
-            fired++
+
+            // Confirm the launch from the flywheel RPM dip (encoder physics,
+            // not hope). A missed dip means the ball is still in the hopper —
+            // count only confirmed shots as fired.
+            detector.arm()
+            val confirmDeadline = System.nanoTime() + (SHOT_DETECT_WINDOW_MS * 1e6).toLong()
+            while (opModeIsActive() && detector.state == ShotDetector.State.ARMED &&
+                System.nanoTime() < confirmDeadline
+            ) {
+                drive.updatePoseEstimate()
+                when (detector.update()) {
+                    ShotDetector.State.CONFIRMED -> {
+                        fired++
+                        telemetry.addData("PHASE 4", "ball %d CONFIRMED (dip %.0f RPM)".format(fired, detector.lastDipRpm))
+                    }
+                    ShotDetector.State.MISSED -> telemetry.addData("PHASE 4", "ball %d MISSED — not counted".format(i))
+                    else -> {}
+                }
+                telemetry.update()
+            }
         }
         return fired
     }
 
-    /** Projects a robot-relative (distanceCm, bearingDeg) into field cm at the current pose. */
-    private fun fieldPosOf(distCm: Double, bearingDeg: Double): Pair<Double, Double> {
-        val px = drive.pose.position.x * 2.54
-        val py = drive.pose.position.y * 2.54
-        val h = drive.pose.heading.toDouble()
-        val bRad = Math.toRadians(bearingDeg)
-        val fwdCm = distCm * cos(bRad)
-        val leftCm = -distCm * sin(bRad)
-        return (px + fwdCm * cos(h) - leftCm * sin(h)) to (py + fwdCm * sin(h) + leftCm * cos(h))
-    }
-
-    /** Combined telemetry: hive range/angle, RR (fused) pose, vision health. */
+    /**
+     * Combined telemetry: hive range/angle, RR (fused) pose, vision health.
+     * ALSO the WorldModel's food source: fuses this frame's sightings and
+     * the hive measurement into the field memory on every call.
+     */
     private fun report(target: HiveTarget? = null) {
         val t = target ?: hive.update()
         tagOverlay.publish(t)
         hive.addTelemetry(telemetry, t)
 
         val p = drive.pose
+        val now = System.nanoTime()
+        val px = p.position.x * 2.54
+        val py = p.position.y * 2.54
+        val hdg = p.heading.toDouble()
+        world.update(ballLocator.sightings(), px, py, hdg, now)
+        world.updateHive(t, px, py, hdg, now)
+
         telemetry.addData(
             "RR/FUSED pose",
             "(%.2f, %.2f) %.1f deg".format(p.position.x, p.position.y, Math.toDegrees(p.heading.toDouble())),
         )
+        telemetry.addData("WORLD", world.summary())
         vision.addTelemetry(telemetry)
         telemetry.update()
     }

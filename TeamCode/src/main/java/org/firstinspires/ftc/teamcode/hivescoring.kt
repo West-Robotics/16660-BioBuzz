@@ -426,6 +426,17 @@ class BallLocator {
 
     private fun balls(): List<BallTarget> = visibleTargets().filter { it.label != "Flower" }
 
+    /**
+     * Everything the FRONT camera sees as [Sighting]s for the [WorldModel]:
+     * balls, flowers and opponent robots in one robot-relative list.
+     */
+    fun sightings(): List<Sighting> =
+        visibleTargets().map {
+            Sighting(it.label, it.distanceCm, it.bearingDeg, it.contourArea, isBall = it.label != "Flower")
+        } + visibleRobots().map {
+            Sighting("Robot", it.distanceCm, it.bearingDeg, it.contourArea, isBall = false)
+        }
+
     /** Closest floor ball across all colors (teleop capture assist target). */
     fun nearestBall(): BallTarget? = balls().minByOrNull { it.distanceCm }
 

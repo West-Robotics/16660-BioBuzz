@@ -44,6 +44,7 @@ import com.qualcomm.robotcore.hardware.VoltageSensor
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles
 import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR0_ANGLE_RAD
+import org.firstinspires.ftc.teamcode.DeadWheelMath
 import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR0_NAME
 import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR0_REVERSED
 import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR0_X_IN
@@ -296,12 +297,17 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
         private val perp = OverflowEncoder(RawEncoder(perpMotor))
         private val imu: IMU = lazyImu.get()
 
-        private val inPerTick = Math.PI * DEAD_WHEEL_DIAMETER_IN / DEAD_WHEEL_TICKS_PER_REV
+        private val inPerTick = DeadWheelMath.inchesPerTick(DEAD_WHEEL_TICKS_PER_REV, DEAD_WHEEL_DIAMETER_IN)
 
-        private val wheels = arrayOf(
-            DeadWheelSpec(DEAD_WHEEL_PAR0_X_IN, DEAD_WHEEL_PAR0_Y_IN, DEAD_WHEEL_PAR0_ANGLE_RAD, DEAD_WHEEL_PAR0_REVERSED),
-            DeadWheelSpec(DEAD_WHEEL_PAR1_X_IN, DEAD_WHEEL_PAR1_Y_IN, DEAD_WHEEL_PAR1_ANGLE_RAD, DEAD_WHEEL_PAR1_REVERSED),
-            DeadWheelSpec(DEAD_WHEEL_PERP_X_IN, DEAD_WHEEL_PERP_Y_IN, DEAD_WHEEL_PERP_ANGLE_RAD, DEAD_WHEEL_PERP_REVERSED),
+        private val wheels = listOf(
+            DeadWheelMath.WheelSpec(DEAD_WHEEL_PAR0_X_IN, DEAD_WHEEL_PAR0_Y_IN, DEAD_WHEEL_PAR0_ANGLE_RAD),
+            DeadWheelMath.WheelSpec(DEAD_WHEEL_PAR1_X_IN, DEAD_WHEEL_PAR1_Y_IN, DEAD_WHEEL_PAR1_ANGLE_RAD),
+            DeadWheelMath.WheelSpec(DEAD_WHEEL_PERP_X_IN, DEAD_WHEEL_PERP_Y_IN, DEAD_WHEEL_PERP_ANGLE_RAD),
+        )
+        private val reversed = listOf(
+            DEAD_WHEEL_PAR0_REVERSED,
+            DEAD_WHEEL_PAR1_REVERSED,
+            DEAD_WHEEL_PERP_REVERSED,
         )
 
         private var lastPos = IntArray(3)
@@ -339,56 +345,23 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
 
             val headingDelta = heading.minus(lastHeading)
 
-            // ---- position increment: least squares for (dx, dy) with IMU delta ----
-            var sxx = 0.0; var sxy = 0.0; var syy = 0.0
-            var bx = 0.0; var by = 0.0
-            for (i in 0..2) {
-                val w = wheels[i]
-                val sign = if (w.reversed) -1.0 else 1.0
-                val d = (pv[i].position - lastPos[i]) * inPerTick * sign
-                val cosT = cos(w.angle)
-                val sinT = sin(w.angle)
-                // remove the arc the wheel traveled purely by rotating
-                val b = d - (w.x * sinT - w.y * cosT) * headingDelta
-                sxx += cosT * cosT
-                sxy += cosT * sinT
-                syy += sinT * sinT
-                bx += cosT * b
-                by += sinT * b
+            // position increment: least squares for (dx, dy) with IMU delta
+            val measured = List(3) { i ->
+                DeadWheelMath.signed((pv[i].position - lastPos[i]) * inPerTick, reversed[i])
             }
-            val det = sxx * syy - sxy * sxy
-            val dx = if (abs(det) < 1e-9) 0.0 else (syy * bx - sxy * by) / det
-            val dy = if (abs(det) < 1e-9) 0.0 else (sxx * by - sxy * bx) / det
+            val (dx, dy) = DeadWheelMath.positionDelta(wheels, measured, headingDelta)
 
             for (i in 0..2) lastPos[i] = pv[i].position
             lastHeading = heading
 
             pose = pose.plus(Twist2d(Vector2d(dx, dy), headingDelta))
 
-            // ---- velocity: exact 3x3 solve for (vx, vy, omega) by Cramer ----
-            // rows: [cos θ_i, sin θ_i, x_i·sin θ_i − y_i·cos θ_i] · (vx,vy,ω)ᵀ = v_i
-            val a = DoubleArray(3) { i -> cos(wheels[i].angle) }
-            val b = DoubleArray(3) { i -> sin(wheels[i].angle) }
-            val c = DoubleArray(3) { i -> wheels[i].x * sin(wheels[i].angle) - wheels[i].y * cos(wheels[i].angle) }
-            val r = DoubleArray(3) { i ->
-                (pv[i].velocity ?: 0).toDouble() * inPerTick * (if (wheels[i].reversed) -1.0 else 1.0)
+            // velocity: exact 3x3 solve for (vx, vy, omega)
+            val measuredVel = List(3) { i ->
+                DeadWheelMath.signed((pv[i].velocity ?: 0).toDouble() * inPerTick, reversed[i])
             }
-            fun det3(m0: Double, m1: Double, m2: Double) = m0 * (b[1] * c[2] - c[1] * b[2]) -
-                m1 * (b[0] * c[2] - c[0] * b[2]) +
-                m2 * (b[0] * c[1] - c[0] * b[1])
-            val D = det3(a[0], a[1], a[2])
-            return if (abs(D) < 1e-9) {
-                PoseVelocity2d(Vector2d(0.0, 0.0), 0.0)
-            } else {
-                val vx = det3(r[0], r[1], r[2]) / D
-                val vy = (a[0] * (r[1] * c[2] - c[1] * r[2]) -
-                    r[0] * (b[1] * c[2] - c[1] * b[2]) +
-                    c[0] * (b[0] * r[1] - r[0] * b[1])) / D
-                val omega = (a[0] * (b[1] * r[2] - r[1] * b[2]) -
-                    b[0] * (a[1] * r[2] - r[1] * a[2]) +
-                    r[0] * (a[1] * b[2] - b[1] * a[2])) / D
-                PoseVelocity2d(Vector2d(vx, vy), omega)
-            }
+            val (vx, vy, omega) = DeadWheelMath.velocity(wheels, measuredVel)
+            return PoseVelocity2d(Vector2d(vx, vy), omega)
         }
     }
 
@@ -704,6 +677,3 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
 
 
 
-
-/** (x, y, angle, reversed) per dead wheel — inches + radians, robot frame. */
-private data class DeadWheelSpec(val x: Double, val y: Double, val angle: Double, val reversed: Boolean)

@@ -1,9 +1,14 @@
 package org.firstinspires.ftc.teamcode
 
+import com.acmerobotics.roadrunner.Pose2d
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
+import org.firstinspires.ftc.teamcode.roadrunner.MecanumDrive
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * ============ BIOBUZZ TELEOP with vision assists ============
@@ -36,6 +41,18 @@ class BioBuzzTeleOp : LinearOpMode() {
         val drivetrain = Drivetrain()
         val intake = Intake()
         val flywheel = FlyWheel()
+
+        // READ-ONLY localizer for teleop: the same MecanumDrive class the
+        // autonomous uses (dead wheels when configured, drive-encoder
+        // odometry otherwise, IMU heading always) — constructed here purely
+        // for its pose. Road Runner never commands the motors in this
+        // OpMode; NextFTC stays the only writer.
+        val locator = MecanumDrive(hardwareMap, Pose2d(0.0, 0.0, 0.0))
+        var fieldCentric = TELEOP_FIELD_CENTRIC_DEFAULT
+        var poseHold = TELEOP_POSE_HOLD_DEFAULT
+        var stillPose: Pose2d? = null
+        var lastLeftStickBtn = false
+        var lastRightStickBtn = false
 
         val aprilTagProcessor = AprilTagProcessor.Builder()
             .setDrawTagOutline(true)
@@ -70,6 +87,23 @@ class BioBuzzTeleOp : LinearOpMode() {
             var forward = (-gamepad1.left_stick_y).toDouble()
             var strafe = gamepad1.left_stick_x.toDouble()
             var turn = gamepad1.right_stick_x.toDouble()
+
+            // ---- localization + mode toggles (edge-detected buttons) ----
+            locator.updatePoseEstimate()
+            if (gamepad1.left_stick_button && !lastLeftStickBtn) fieldCentric = !fieldCentric
+            if (gamepad1.right_stick_button && !lastRightStickBtn) poseHold = !poseHold
+            lastLeftStickBtn = gamepad1.left_stick_button
+            lastRightStickBtn = gamepad1.right_stick_button
+
+            if (fieldCentric) {
+                // Rotate the driver's WORLD-frame stick intent into the robot
+                // frame (RR heading: CCW, radians).
+                val h = locator.pose.heading.toDouble()
+                val f2 = forward * cos(h) + strafe * sin(h)
+                val s2 = -forward * sin(h) + strafe * cos(h)
+                forward = f2
+                strafe = s2
+            }
 
             // ---- latest hive measurement (used by assist + flywheel + telemetry) ----
             val target = hive.update()
@@ -120,6 +154,27 @@ class BioBuzzTeleOp : LinearOpMode() {
                 }
             }
 
+            // ---- POSE HOLD: sticks released -> hold the last still pose ----
+            val idleInput = abs(forward) < TELEOP_INPUT_DEADZONE &&
+                abs(strafe) < TELEOP_INPUT_DEADZONE &&
+                abs(turn) < TELEOP_INPUT_DEADZONE
+            if (poseHold && idleInput) {
+                if (stillPose == null) stillPose = locator.pose
+                // Body-frame twist taking us back to the still pose (+x fwd, +y left, +angle CCW)
+                val err = stillPose!!.minus(locator.pose)
+                val hf = (TELEOP_HOLD_POSITION_KP * err.line.x)
+                    .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
+                val hs = (TELEOP_HOLD_POSITION_KP * err.line.y)
+                    .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
+                val ht = (TELEOP_HOLD_HEADING_KP * Math.toDegrees(err.angle))
+                    .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
+                forward = (forward + hf).coerceIn(-1.0, 1.0)
+                strafe = (strafe + hs).coerceIn(-1.0, 1.0)
+                turn = (turn + ht).coerceIn(-1.0, 1.0)
+            } else {
+                stillPose = null
+            }
+
             // ---- drive (existing NextFTC drivetrain) + fusion + telemetry ----
             drivetrain.driveTeleOp(forward, strafe, turn)
             vision.periodic()
@@ -144,6 +199,22 @@ class BioBuzzTeleOp : LinearOpMode() {
                 telemetry.addData("BALL", "none visible")
             }
             telemetry.addData("Assists", if (alignAssist) "SHOOT" else if (gamepad1.left_bumper) "CAPTURE" else "off")
+            telemetry.addData(
+                "Drive mode",
+                "%s%s | LStkBtn toggles | RStkBtn hold %s".format(
+                    if (fieldCentric) "FIELD-CENTRIC" else "robot-centric",
+                    if (poseHold && stillPose != null) " [HOLDING]" else "",
+                    if (poseHold) "ON" else "OFF",
+                ),
+            )
+            telemetry.addData(
+                "Pose",
+                "(%.2f, %.2f) %.1f deg | loc: %s".format(
+                    locator.pose.position.x, locator.pose.position.y,
+                    Math.toDegrees(locator.pose.heading.toDouble()),
+                    if (locator.usingDeadWheels) "dead wheels" else "drive motors",
+                ),
+            )
             vision.addTelemetry(telemetry)
             telemetry.update()
         }
