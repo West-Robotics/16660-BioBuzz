@@ -66,7 +66,7 @@ class BioBuzzTeleOp : LinearOpMode() {
             extraUpProcessors = listOf(aprilTagProcessor, tagOverlay),
             extraFrontProcessors = ballLocator.processors,
         )
-        val hive = HiveScoring(aprilTagProcessor)
+        val hive = HiveScoring(aprilTagProcessor, vision.aprilTagCameraId)
         val cfg = HiveScoringConfig
 
         // ---- INIT: pick your alliance before the match starts ----
@@ -77,6 +77,7 @@ class BioBuzzTeleOp : LinearOpMode() {
             else if (gamepad1.dpad_right) SELECTED_TEAM = TeamColor.BLUE
 
             telemetry.addLine("BioBuzz TeleOp: LB=capture assist  RB=shoot assist")
+            telemetry.addData("Cameras", vision.cameraMode)
             telemetry.addData("ALLIANCE", SELECTED_TEAM.name)
             telemetry.addLine("Select with D-pad: LEFT = RED, RIGHT = BLUE")
             telemetry.update()

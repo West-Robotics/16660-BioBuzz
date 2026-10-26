@@ -43,24 +43,11 @@ import com.qualcomm.robotcore.hardware.IMU
 import com.qualcomm.robotcore.hardware.VoltageSensor
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR0_ANGLE_RAD
 import org.firstinspires.ftc.teamcode.DeadWheelMath
+import org.firstinspires.ftc.teamcode.DrivetrainSpec
 import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR0_NAME
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR0_REVERSED
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR0_X_IN
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR0_Y_IN
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR1_ANGLE_RAD
 import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR1_NAME
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR1_REVERSED
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR1_X_IN
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PAR1_Y_IN
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_DIAMETER_IN
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PERP_ANGLE_RAD
 import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PERP_NAME
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PERP_REVERSED
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PERP_X_IN
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_PERP_Y_IN
-import org.firstinspires.ftc.teamcode.DEAD_WHEEL_TICKS_PER_REV
 import org.firstinspires.ftc.teamcode.DrivetrainBackLeft
 import org.firstinspires.ftc.teamcode.DrivetrainBackRight
 import org.firstinspires.ftc.teamcode.DrivetrainFrontLeft
@@ -95,10 +82,11 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
         var logoFacingDirection = RevHubOrientationOnRobot.LogoFacingDirection.UP
         var usbFacingDirection = RevHubOrientationOnRobot.UsbFacingDirection.FORWARD
 
-        // drive model parameters
-        var inPerTick = 1.0
-        var lateralInPerTick = inPerTick
-        var trackWidthTicks = 0.0
+        // drive model parameters (defaults COMPUTED from DrivetrainSpec's
+        // physical measurements; fine-tune live via FTC Dashboard after that)
+        var inPerTick = DrivetrainSpec.rrInPerTick
+        var lateralInPerTick = DrivetrainSpec.rrLateralInPerTick
+        var trackWidthTicks = DrivetrainSpec.rrTrackWidthTicks
 
         // feedforward parameters (in tick units)
         var kS = 0.0
@@ -297,18 +285,10 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
         private val perp = OverflowEncoder(RawEncoder(perpMotor))
         private val imu: IMU = lazyImu.get()
 
-        private val inPerTick = DeadWheelMath.inchesPerTick(DEAD_WHEEL_TICKS_PER_REV, DEAD_WHEEL_DIAMETER_IN)
+        private val inPerTick = DrivetrainSpec.deadWheelInPerTick
 
-        private val wheels = listOf(
-            DeadWheelMath.WheelSpec(DEAD_WHEEL_PAR0_X_IN, DEAD_WHEEL_PAR0_Y_IN, DEAD_WHEEL_PAR0_ANGLE_RAD),
-            DeadWheelMath.WheelSpec(DEAD_WHEEL_PAR1_X_IN, DEAD_WHEEL_PAR1_Y_IN, DEAD_WHEEL_PAR1_ANGLE_RAD),
-            DeadWheelMath.WheelSpec(DEAD_WHEEL_PERP_X_IN, DEAD_WHEEL_PERP_Y_IN, DEAD_WHEEL_PERP_ANGLE_RAD),
-        )
-        private val reversed = listOf(
-            DEAD_WHEEL_PAR0_REVERSED,
-            DEAD_WHEEL_PAR1_REVERSED,
-            DEAD_WHEEL_PERP_REVERSED,
-        )
+        private val wheels = DrivetrainSpec.deadWheelsIn()
+        private val reversed = DrivetrainSpec.deadWheelReversed()
 
         private var lastPos = IntArray(3)
         private var lastHeading = Rotation2d.exp(0.0)

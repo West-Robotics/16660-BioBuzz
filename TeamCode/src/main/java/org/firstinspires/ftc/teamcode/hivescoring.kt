@@ -116,9 +116,14 @@ data class HiveTarget(
  *     bearing = atan(pixel offset / focal). Works with no library metadata;
  *     only fires when tags are reported as singles (custom tag setups).
  */
-class HiveScoring(private val aprilTagProcessor: AprilTagProcessor) {
+class HiveScoring(
+    private val aprilTagProcessor: AprilTagProcessor,
+    /** Which camera the tags actually run on — in single-camera mode the
+     *  FRONT camera carries them and its intrinsics must be used. */
+    cameraId: CameraId = CameraId.UP,
+) {
 
-    private val upIntrinsics = VisionConfig.calibrationFor(CameraId.UP).intrinsics
+    private val upIntrinsics = VisionConfig.calibrationFor(cameraId).intrinsics
 
     /**
      * Latest hive target for the SELECTED ALLIANCE ([SELECTED_TEAM], picked

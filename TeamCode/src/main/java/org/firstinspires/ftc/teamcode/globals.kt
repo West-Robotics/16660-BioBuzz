@@ -17,14 +17,14 @@ const val FlywheelRightMotor = "flywheelright"
 const val IntakeMotor = "intake"
 const val IntakeGearRatio = 1.0
 
-const val WheelDiameterCm = 5.0
-const val WheelGearRatio = 1.0
-// MEASURE: distance between front and rear axle centers. The 87.0 default is a
-// PLACEHOLDER larger than any legal FTC robot — an unmeasured value makes
-// Drivetrain.turn() overshoot by (real/measured) turns.
-const val WheelBaseCm: Double = 87.0
-// MEASURE: distance between left and right wheel contact points (same caveat).
-const val TrackWidthCm: Double = 87.0
+// Drivetrain geometry now DERIVES from the physical measurements in
+// drivetrainspec.kt (DrivetrainSpec) — edit the measurements there, not here.
+// The aliases below keep every existing consumer (cmToRad, RR PARAMS, the
+// NextMotor encoder conversions) pointed at the same single source of truth.
+val WheelDiameterCm: Double = DrivetrainSpec.DRIVE_WHEEL_DIAMETER_CM
+val WheelGearRatio: Double = DrivetrainSpec.DRIVE_GEAR_RATIO // spec-sheet value (NOT used in position math)
+val WheelBaseCm: Double = DrivetrainSpec.WHEELBASE_CM
+val TrackWidthCm: Double = DrivetrainSpec.TRACK_WIDTH_CM
 
 // ================== MOTOR SPECS (goBILDA 5203-series Yellow Jackets) ==================
 // Every motor below has a BUILT-IN quadrature encoder. The counts-per-rev (CPR)
@@ -34,7 +34,8 @@ const val TrackWidthCm: Double = 87.0
 
 // -- Drivetrain: 4x 117 RPM (5203-2402-0051), mecanum --
 const val DRIVE_MOTOR_MAX_RPM = 117.0
-const val DRIVE_MOTOR_ENCODER_CPR = 1440.9 // 28 CPR motor-shaft encoder x 51.46:1 gearbox
+// DERIVED from DrivetrainSpec (motor CPR x gearbox ratio) — no hand math.
+val DRIVE_MOTOR_ENCODER_CPR = DrivetrainSpec.driveTicksPerWheelRev
 
 // -- Flywheel: 2x 6000 RPM (5203-2402-0001), one per side of the ball --
 const val FLYWHEEL_MOTOR_MAX_RPM = 6000.0
@@ -153,30 +154,12 @@ const val MIN_CYCLE_REMAINING_SEC = 14.0    // a second collect+align+fire cycle
 // The Road Runner localizer uses these automatically WHEN all three motors exist
 // in the hardware configuration; otherwise it falls back to the (slip-prone)
 // mecanum drive-motor odometry. Bolt on any 3" style omni odometry pods and
-// name the motors below in the Driver Hub config.
+// name the motors below in the Driver Hub config. All geometry (positions,
+// angles, reversal flags, ticks per rev, wheel diameter) lives in
+// DrivetrainSpec (drivetrainspec.kt) — measure there, the math happens here.
 const val DEAD_WHEEL_PAR0_NAME = "par0"     // parallel wheel (forward rolling)
 const val DEAD_WHEEL_PAR1_NAME = "par1"     // second parallel wheel
 const val DEAD_WHEEL_PERP_NAME = "perp"     // perpendicular wheel
-const val DEAD_WHEEL_TICKS_PER_REV = 2000.0 // goBILDA 4-bar pod: VERIFY against the spec sheet
-const val DEAD_WHEEL_DIAMETER_IN = 1.37795  // 35mm pod wheel: MEASURE
-
-// MEASURE: each wheel's mounting position IN INCHES from the drive center,
-// +x forward, +y left; angle in radians (0 = rolls when driving forward,
-// PI/2 = rolls when strafing left). Sign conventions are corrected with the
-// reversed flags — run the "Localization Test" style check (push the robot,
-// watch telemetry) after wiring.
-const val DEAD_WHEEL_PAR0_X_IN = 0.0
-const val DEAD_WHEEL_PAR0_Y_IN = 6.0
-const val DEAD_WHEEL_PAR0_ANGLE_RAD = 0.0
-const val DEAD_WHEEL_PAR0_REVERSED = false
-const val DEAD_WHEEL_PAR1_X_IN = 0.0
-const val DEAD_WHEEL_PAR1_Y_IN = -6.0
-const val DEAD_WHEEL_PAR1_ANGLE_RAD = 0.0
-const val DEAD_WHEEL_PAR1_REVERSED = false
-const val DEAD_WHEEL_PERP_X_IN = -6.0
-const val DEAD_WHEEL_PERP_Y_IN = 0.0
-val DEAD_WHEEL_PERP_ANGLE_RAD = Math.PI / 2
-const val DEAD_WHEEL_PERP_REVERSED = false
 
 // ================== FLOWER PULL-OUT — CUSTOMIZE FOR YOUR MECHANISM ==================
 const val FLOWER_PULL_ENABLED = true         // autonomous tries flowers at all

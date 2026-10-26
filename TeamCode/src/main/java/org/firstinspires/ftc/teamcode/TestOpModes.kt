@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode
 import android.util.Size
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
+import com.qualcomm.robotcore.hardware.DcMotorEx
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName
 import org.firstinspires.ftc.teamcode.vision.CameraId
 import org.firstinspires.ftc.teamcode.vision.VisionConfig
@@ -444,5 +445,137 @@ class CameraCalibrationOpMode : LinearOpMode() {
             "%s\nfocal ~%.0f px (cfg %.0f)\ntag w=%.0fpx",
             name, m.focalPx, configuredFocal, m.widthPx,
         )
+    }
+}
+
+/**
+ * ============ DRIVETRAIN SETUP & VERIFY — the bring-up bench ============
+ *
+ * Verifies the DrivetrainSpec measurements BEFORE trusting any position move.
+ * Everything printed derives from the spec — you bring a tape measure.
+ *
+ *  INIT: prints every derived constant (ticks/rev, cm-per-tick, RR params).
+ *  A (tap):  spin all drive wheels at 0.25 power for 1s -> reports each
+ *            motor's encoder ticks + sign (verify ticks match the spec and
+ *            fix `direction` in motors.kt for any motor that runs backward).
+ *  B (tap):  commands a 50 cm straight crawl -> shows the exact tick count
+ *            to expect; tape-measure the result and compare.
+ *  X (hold): LIVE encoder readout (drive motors + dead wheels). Push the
+ *            robot by hand: forward 1 m -> par0/par1 should both read
+ *            POSITIVE (~spec) ticks; strafe left 1 m -> perp reads POSITIVE.
+ *            If any pod counts the WRONG WAY, flip its *_REVERSED flag in
+ *            DrivetrainSpec (never rewire the hub).
+ */
+@TeleOp(name = "Drivetrain Setup & Verify", group = "Test")
+class DrivetrainSetupOpMode : LinearOpMode() {
+
+    override fun runOpMode() {
+        val drivetrain = Drivetrain()
+        val frontLeft = hardwareMap.get(DcMotorEx::class.java, DrivetrainFrontLeft)
+        val frontRight = hardwareMap.get(DcMotorEx::class.java, DrivetrainFrontRight)
+        val backLeft = hardwareMap.get(DcMotorEx::class.java, DrivetrainBackLeft)
+        val backRight = hardwareMap.get(DcMotorEx::class.java, DrivetrainBackRight)
+        fun deadWheel(name: String): DcMotorEx? = try {
+            hardwareMap.get(DcMotorEx::class.java, name)
+        } catch (_: Exception) {
+            null
+        }
+        val par0 = deadWheel(DEAD_WHEEL_PAR0_NAME)
+        val par1 = deadWheel(DEAD_WHEEL_PAR1_NAME)
+        val perp = deadWheel(DEAD_WHEEL_PERP_NAME)
+
+        fun snapshot(): List<Int> = listOf(
+            frontLeft.currentPosition, frontRight.currentPosition,
+            backLeft.currentPosition, backRight.currentPosition,
+            par0?.currentPosition ?: 0, par1?.currentPosition ?: 0, perp?.currentPosition ?: 0,
+        )
+
+        for (pair in DrivetrainSpec.summary()) {
+            telemetry.addData(pair.first, pair.second)
+        }
+        telemetry.addData("Dead wheels", if (par0 != null && par1 != null && perp != null) "configured" else "not configured")
+        telemetry.addLine("A: spin test 1s | B: 50cm crawl | X(hold): live encoders")
+        telemetry.update()
+        waitForStart()
+
+        var lastA = false
+        var lastB = false
+        var base = snapshot()
+
+        while (opModeIsActive()) {
+            val now = snapshot()
+
+            // ---- A: 1-second spin test ----
+            if (gamepad1.a && !lastA) {
+                base = snapshot()
+                for (m in listOf(frontLeft, frontRight, backLeft, backRight)) m.power = 0.25
+                sleep(1000)
+                for (m in listOf(frontLeft, frontRight, backLeft, backRight)) m.power = 0.0
+                val after = snapshot()
+                val names = listOf("FL", "FR", "BL", "BR")
+                for (i in 0..3) {
+                    val ticks = after[i] - base[i]
+                    val expectedSign = if (i == 1 || i == 3) "-" else "+" // FR/BR face backward
+                    telemetry.addData(
+                        "$names[i] spin",
+                        "%+d ticks (%s fwd expected; ~%.0f%% of %.0f t/rev)".format(
+                            ticks, expectedSign,
+                            kotlin.math.abs(ticks).toDouble() / DrivetrainSpec.driveTicksPerWheelRev * 100.0,
+                            DrivetrainSpec.driveTicksPerWheelRev,
+                        ),
+                    )
+                }
+                telemetry.update()
+                sleep(3000)
+            }
+
+            // ---- B: 50 cm straight crawl ----
+            if (gamepad1.b && !lastB) {
+                base = snapshot()
+                drivetrain.driveForward(50.0, 0.25)
+                sleep(4000)
+                val after = snapshot()
+                telemetry.addData(
+                    "50cm crawl",
+                    "expected %+d ticks/wheel (FL measured %+d)".format(
+                        DrivetrainSpec.cmToWheelTicks(50.0), after[0] - base[0],
+                    ),
+                )
+                telemetry.addLine("Tape-measure: did the robot move 50 cm?")
+                telemetry.update()
+                sleep(3000)
+            }
+
+            lastA = gamepad1.a
+            lastB = gamepad1.b
+
+            // ---- X (hold): live encoder readout for hand pushes ----
+            if (gamepad1.x) {
+                telemetry.addData("FL/FR/BL/BR", "%d %d %d %d".format(now[0], now[1], now[2], now[3]))
+                telemetry.addData(
+                    "par0/par1/perp",
+                    "%d %d %d%s".format(
+                        now[4], now[5], now[6],
+                        if (par0 == null) " (pods not configured)" else "",
+                    ),
+                )
+                telemetry.addData(
+                    "1m push should read",
+                    "par0/par1 ~%.0f ticks; perp ~%.0f ticks (STRAFE 1m)".format(
+                        100.0 / DrivetrainSpec.driveCmPerTick, // rough guide via drive ticks
+                        100.0 / 2.54 / DrivetrainSpec.deadWheelInPerTick,
+                    ),
+                )
+                telemetry.addData("par0/par1 (1m fwd)", "~%.0f ticks".format(100.0 / 2.54 / DrivetrainSpec.deadWheelInPerTick))
+                telemetry.update()
+            } else {
+                for (pair in DrivetrainSpec.summary()) telemetry.addData(pair.first, pair.second)
+                telemetry.addData("Dead wheels", if (par0 != null && par1 != null && perp != null) "configured" else "not configured")
+                telemetry.addLine("A: spin test 1s | B: 50cm crawl | X(hold): live encoders")
+                telemetry.update()
+            }
+        }
+
+        drivetrain.flushMotors()
     }
 }
