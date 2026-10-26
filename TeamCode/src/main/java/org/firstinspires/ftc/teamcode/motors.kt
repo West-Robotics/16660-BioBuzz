@@ -73,12 +73,16 @@ class Drivetrain : Mechanism {
         zeroPowerBehavior = NextMotor.ZeroPowerBehavior.BRAKE // use BRAKE or FLOAT
     }
 
-    fun cmToTicks(cm: Double): Int {
-        return (cm / (Math.PI * WheelDiameterCm) * DRIVE_MOTOR_ENCODER_CPR * WheelGearRatio).roundToInt()
-    }
-    fun cmToRad(cm: Double): Double {
-        return ((2.0 * cm / WheelDiameterCm) * WheelGearRatio)
-    }
+    /**
+     * cm -> wheel ticks / wheel radians. Delegates to DrivetrainSpec so the
+     * units chain (encoder ticks = wheel radians = NextFTC position units)
+     * has exactly ONE definition. The old WheelGearRatio multiplier is GONE:
+     * the gearbox is already folded into driveTicksPerWheelRev, and NextFTC
+     * positions are in WHEEL radians — motor radians would overshoot by the
+     * gear ratio.
+     */
+    fun cmToTicks(cm: Double): Int = DrivetrainSpec.cmToWheelTicks(cm)
+    fun cmToRad(cm: Double): Double = DrivetrainSpec.cmToWheelRad(cm)
 
     /**
      * Commands each wheel to rotate by the given deltas (radians), measured
@@ -123,18 +127,11 @@ class Drivetrain : Mechanism {
     }
 
     fun turn(degrees: Double, speed: Double = 1.0) {
-        val radius = sqrt(
-            WheelBaseCm * WheelBaseCm +
-                    TrackWidthCm * TrackWidthCm
-        ) / 2.0
-
-        val angleRad = degrees * PI / 180.0
-        val wheelCm = radius * angleRad
-        val motorRad = cmToRad(wheelCm)
+        val wheelRad = DrivetrainSpec.turnToWheelRad(degrees)
 
         setSpeed(speed)
 
-        moveBy(motorRad, -motorRad, motorRad, -motorRad)
+        moveBy(wheelRad, -wheelRad, wheelRad, -wheelRad)
     }
 
     /**

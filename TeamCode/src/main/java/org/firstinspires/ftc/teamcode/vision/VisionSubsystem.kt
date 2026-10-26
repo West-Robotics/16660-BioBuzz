@@ -360,22 +360,66 @@ class VisionSubsystem(
     /** The two cameras are two observation sources for ONE pose estimate. */
     val fusion = HybridPoseEstimator(upProcessor, frontProcessor)
 
+    // ---- SINGLE-CAMERA SUPPORT ----
+    // One camera works: mount it in the FRONT position (as high as practical,
+    // aimed ~level) and wire it under FRONT_CAM_NAME. It then carries the
+    // front processors AND the UP camera's jobs (AprilTags etc.); localization
+    // runs on one odometry source — fine, because the dead wheels + IMU now
+    // carry the pose. A camera wired under UP_CAM_NAME only also works.
+
+    /** True when the UP ("high") camera exists in the hardware configuration. */
+    val hasUpCamera: Boolean = cameraExists(hardwareMap, UP_CAM_NAME)
+
+    /** True when the FRONT ("ground") camera exists in the hardware configuration. */
+    val hasFrontCamera: Boolean = cameraExists(hardwareMap, FRONT_CAM_NAME)
+
+    /**
+     * Which camera the hive AprilTagProcessor is actually attached to (the
+     * intrinsics HiveScoring must use for range/bearing). Tags ride the UP
+     * portal when it exists; in single-camera mode they follow the survivors.
+     */
+    val aprilTagCameraId: CameraId = if (hasUpCamera) CameraId.UP else CameraId.FRONT
+
     private val portalViewIds =
         VisionPortal.makeMultiPortalView(2, VisionPortal.MultiPortalLayout.VERTICAL)
 
-    val upPortal: VisionPortal = VisionPortal.Builder()
-        .setCamera(hardwareMap.get(WebcamName::class.java, UP_CAM_NAME))
-        .setCameraResolution(Size(VisionTuning.UP_CAM_WIDTH, VisionTuning.UP_CAM_HEIGHT))
-        .setLiveViewContainerId(portalViewIds[0])
-        .addProcessors(upProcessor, *extraUpProcessors.toTypedArray())
-        .build()
+    val upPortal: VisionPortal? =
+        if (hasUpCamera) {
+            VisionPortal.Builder()
+                .setCamera(hardwareMap.get(WebcamName::class.java, UP_CAM_NAME))
+                .setCameraResolution(Size(VisionTuning.UP_CAM_WIDTH, VisionTuning.UP_CAM_HEIGHT))
+                .setLiveViewContainerId(portalViewIds[0])
+                .addProcessors(upProcessor, *extraUpProcessors.toTypedArray())
+                .build()
+        } else {
+            null
+        }
 
-    val frontPortal: VisionPortal = VisionPortal.Builder()
-        .setCamera(hardwareMap.get(WebcamName::class.java, FRONT_CAM_NAME))
-        .setCameraResolution(Size(VisionTuning.FRONT_CAM_WIDTH, VisionTuning.FRONT_CAM_HEIGHT))
-        .setLiveViewContainerId(portalViewIds[1])
-        .addProcessors(frontProcessor, *extraFrontProcessors.toTypedArray())
-        .build()
+    val frontPortal: VisionPortal? =
+        if (hasFrontCamera) {
+            VisionPortal.Builder()
+                .setCamera(hardwareMap.get(WebcamName::class.java, FRONT_CAM_NAME))
+                .setCameraResolution(Size(VisionTuning.FRONT_CAM_WIDTH, VisionTuning.FRONT_CAM_HEIGHT))
+                .setLiveViewContainerId(portalViewIds[1])
+                .addProcessors(
+                    frontProcessor,
+                    *extraFrontProcessors.toTypedArray(),
+                    // Single-camera mode: the surviving front camera also
+                    // carries the UP camera's processors (AprilTags, overlays).
+                    *(if (hasUpCamera) emptyList() else extraUpProcessors).toTypedArray(),
+                )
+                .build()
+        } else {
+            null
+        }
+
+    /** Compact camera-mode line for telemetry. */
+    val cameraMode: String = when {
+        hasUpCamera && hasFrontCamera -> "2 cameras (up+front hybrid)"
+        hasUpCamera -> "1 camera [UP] — front jobs ride on it"
+        hasFrontCamera -> "1 camera [FRONT] — up jobs ride on it"
+        else -> "NO CAMERAS — vision inactive"
+    }
 
     private var lastRrPose = Pose2d(0.0, 0.0, 0.0)
 
@@ -470,9 +514,17 @@ class VisionSubsystem(
     }
 
     fun close() {
-        upPortal.close()
-        frontPortal.close()
+        upPortal?.close()
+        frontPortal?.close()
     }
+
+    private fun cameraExists(hardwareMap: HardwareMap, name: String): Boolean =
+        try {
+            hardwareMap.get(WebcamName::class.java, name)
+            true
+        } catch (_: Exception) {
+            false
+        }
 }
 
 // ============================================================================

@@ -132,7 +132,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
             extraFrontProcessors = ballLocator.processors + frontFrames +
                 DetectorProcessor(hardwareMap.appContext),
         )
-        hive = HiveScoring(aprilTagProcessor)
+        hive = HiveScoring(aprilTagProcessor, vision.aprilTagCameraId)
         intake = Intake()
         flywheel = FlyWheel()
         loader = Loader().also { it.home() }

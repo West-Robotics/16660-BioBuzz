@@ -95,7 +95,7 @@ class BioBuzzTeleOp : LinearOpMode() {
                 extraFrontProcessors = ballLocator.processors +
                     FrameGrabProcessor("FRONT") + nnDetector,
             )
-            hive = HiveScoring(aprilTagProcessor)
+            hive = HiveScoring(aprilTagProcessor, vision!!.aprilTagCameraId)
         }
         val cfg = HiveScoringConfig
 
@@ -120,6 +120,7 @@ class BioBuzzTeleOp : LinearOpMode() {
             else if (gamepad1.dpad_right) SELECTED_TEAM = TeamColor.BLUE
 
             telemetry.addLine("BioBuzz TeleOp: LB=capture assist  RB=shoot assist")
+            telemetry.addData("Cameras", vision?.cameraMode ?: "NO CAMERAS — vision inactive")
             telemetry.addData("ALLIANCE", SELECTED_TEAM.name)
             telemetry.addLine("Select with D-pad: LEFT = RED, RIGHT = BLUE")
             if (manualOnly) {

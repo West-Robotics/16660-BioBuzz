@@ -100,7 +100,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             extraFrontProcessors = ballLocator.processors + FrameGrabProcessor("FRONT") +
                 DetectorProcessor(hardwareMap.appContext),
         )
-        hive = HiveScoring(aprilTagProcessor)
+        hive = HiveScoring(aprilTagProcessor, vision.aprilTagCameraId)
         intake = Intake()
         flywheel = FlyWheel()
         loader = Loader().also { it.home() }
@@ -127,6 +127,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             else if (gamepad1.dpad_right) SELECTED_TEAM = TeamColor.BLUE
 
             telemetry.addLine("BioBuzz autonomous: RR + hybrid vision + AprilTag scoring")
+            telemetry.addData("Cameras", vision.cameraMode)
             telemetry.addData(
                 "Vision corrections",
                 if (drive.visionCorrectionEnabled) "ENABLED" else "disabled (pass vision tests first)",
