@@ -36,17 +36,20 @@ private fun nextYellowJacket(
     anglePerCount = (2.0 * PI / encoderCpr).radians,
 ).apply {
     configure()
-    val maxRadPerSec = maxRpm * 2.0 * PI / 60.0
+    // Velocity setpoints are commanded in RPM (see setVelocitySetpoint callers),
+    // and NextFTC's feedforward/PID operate on the raw setpoint magnitude, so
+    // gains must be per-RPM, not per-(rad/s).
+    val velocityKv = 1.0 / maxRpm      // full throttle at the motor's top speed
     velocityConstants.apply {
-        kV = 1.0 / maxRadPerSec   // full throttle at the motor's top speed
-        kP = kV                    // start with P ~= V; raise if it lags
+        kV = velocityKv
+        kP = velocityKv               // start with P ~= V; raise if it lags
         kI = 0.0
-        kS = 0.03                  // static-friction compensation
+        kS = 0.03                     // static-friction compensation
     }
     positionConstants.apply {
-        kP = POSITION_KP           // throttle per radian of position error (TUNE)
+        kP = POSITION_KP              // throttle per radian of position error (TUNE)
         kD = 0.0
-        kV = 1.0 / maxRadPerSec
+        kV = 1.0 / maxRpm
     }
 }
 

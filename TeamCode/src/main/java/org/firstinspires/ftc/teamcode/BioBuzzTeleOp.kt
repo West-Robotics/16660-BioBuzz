@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode
 import com.acmerobotics.roadrunner.Pose2d
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
+import dev.nextftc.hardware.actuators.NextMotor
 import org.firstinspires.ftc.teamcode.roadrunner.MecanumDrive
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
@@ -84,6 +85,10 @@ class BioBuzzTeleOp : LinearOpMode() {
         }
 
         while (opModeIsActive()) {
+            // NextFTC motors only physically update when this event loop is
+            // polled; NextOpMode would do it, but this OpMode is a plain
+            // LinearOpMode, so it must be done here every cycle.
+            NextMotor.motorEventLoop.poll()
             // ---- driver input ----
             var forward = (-gamepad1.left_stick_y).toDouble()
             var strafe = gamepad1.left_stick_x.toDouble()
@@ -98,10 +103,11 @@ class BioBuzzTeleOp : LinearOpMode() {
 
             if (fieldCentric) {
                 // Rotate the driver's WORLD-frame stick intent into the robot
-                // frame (RR heading: CCW, radians).
+                // frame (RR heading: CCW, radians; +strafe = RIGHT, matching
+                // the drive matrix below).
                 val h = locator.pose.heading.toDouble()
-                val f2 = forward * cos(h) + strafe * sin(h)
-                val s2 = -forward * sin(h) + strafe * cos(h)
+                val f2 = forward * cos(h) - strafe * sin(h)
+                val s2 = forward * sin(h) + strafe * cos(h)
                 forward = f2
                 strafe = s2
             }
@@ -224,6 +230,8 @@ class BioBuzzTeleOp : LinearOpMode() {
         drivetrain.flushMotors()
         intake.stop()
         flywheel.stop()
+        NextMotor.motorEventLoop.poll()
+        vision.close()
         vision.close()
     }
 }

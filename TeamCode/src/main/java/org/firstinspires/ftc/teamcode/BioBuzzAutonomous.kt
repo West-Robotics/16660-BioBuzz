@@ -8,6 +8,7 @@ import com.acmerobotics.roadrunner.Vector2d
 import com.pedropathing.ivy.behaviors.EndCondition
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
+import dev.nextftc.hardware.actuators.NextMotor
 import org.firstinspires.ftc.teamcode.roadrunner.MecanumDrive
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.teamcode.vision.VisionTuning
@@ -138,6 +139,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             var totalScored = 0
             while (opModeIsActive()) {
                 cycle++
+                NextMotor.motorEventLoop.poll()
                 telemetry.addData("AUTO CYCLE", cycle)
                 telemetry.addData("Clock", "%.1fs left".format(clock.remainingSec()))
                 telemetry.update()
@@ -223,6 +225,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), 0.0))
             intake.stop()
             flywheel.stop()
+            NextMotor.motorEventLoop.poll()
             vision.close()
         }
     }
@@ -238,6 +241,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         val packet = TelemetryPacket()
         var running = true
         while (running && opModeIsActive()) {
+            NextMotor.motorEventLoop.poll()
             running = action.run(packet) // also updates pose (and vision correction)
             vision.updateRoadRunnerPose(drive.pose)
             report()
@@ -255,6 +259,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         val cmd = visionGuidance(drive, vision)
         cmd.start()
         while (!cmd.done() && opModeIsActive()) {
+            NextMotor.motorEventLoop.poll()
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
             cmd.execute()
@@ -280,7 +285,7 @@ class BioBuzzAutonomous : LinearOpMode() {
      *      or by proximity-settle, then forget the ball,
      *   6. nothing visible AND nothing remembered: sweep-search in place
      *      instead of the old blind forward creep.
-     * Bounded by [deadlineNanos] (clock-clamped, never past the reserves).
+      * Bounded by [deadlineNanos] (clock-clamped, never past the reserves).
      */
     private fun collectBalls(deadlineNanos: Long): Int {
         var collected = 0
@@ -292,6 +297,7 @@ class BioBuzzAutonomous : LinearOpMode() {
 
         intake.spinUp(1.0)
         while (opModeIsActive() && collected < MAX_BALLS_HELD && System.nanoTime() < deadlineNanos) {
+            NextMotor.motorEventLoop.poll()
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
             val now = System.nanoTime()
@@ -431,6 +437,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         var positioned = false
 
         while (opModeIsActive() && System.nanoTime() < deadlineNanos) {
+            NextMotor.motorEventLoop.poll()
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
             val now = System.nanoTime()
@@ -493,6 +500,7 @@ class BioBuzzAutonomous : LinearOpMode() {
 
         // Give the released ball time to settle into the intake.
         intake.spinUp(1.0)
+        NextMotor.motorEventLoop.poll()
         sleep(FLOWER_SETTLE_AFTER_PULL_MS)
         intake.stop()
         return true
@@ -507,6 +515,7 @@ class BioBuzzAutonomous : LinearOpMode() {
      */
     private fun alignToHive(deadlineNanos: Long): Boolean {
         while (opModeIsActive() && System.nanoTime() < deadlineNanos) {
+            NextMotor.motorEventLoop.poll()
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
 
@@ -570,6 +579,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         val spinDeadline = System.nanoTime() +
             (clock.remainingSec().coerceAtMost(AUTONOMY_FIRE_RESERVE_SEC) * 1e9).toLong()
         while (opModeIsActive() && !flywheel.isAtSpeed(rpm) && System.nanoTime() < spinDeadline) {
+            NextMotor.motorEventLoop.poll()
             telemetry.addData("PHASE 4", "spinning up to %.0f RPM".format(rpm))
             telemetry.addData(
                 "Measured L/R",
@@ -593,6 +603,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             val recoverDeadline = System.nanoTime() +
                 (clock.remainingSec().coerceAtMost(AUTONOMY_FIRE_RESERVE_SEC) * 1e9).toLong()
             while (opModeIsActive() && !flywheel.isAtSpeed(rpm) && System.nanoTime() < recoverDeadline) {
+                NextMotor.motorEventLoop.poll()
                 telemetry.addData("PHASE 4", "recovering to %.0f RPM (ball %d/%d)".format(rpm, i, ballCount))
                 telemetry.update()
             }
@@ -601,6 +612,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             telemetry.addData("PHASE 4", "FIRING ball %d/%d at %.0f RPM".format(i, ballCount, rpm))
             telemetry.update()
             intake.spinUp(1.0)
+            NextMotor.motorEventLoop.poll()
             sleep(FLYWHEEL_FEED_TIME_MS.toLong())
             intake.stop()
 

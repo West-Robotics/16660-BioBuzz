@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
+import dev.nextftc.hardware.actuators.NextMotor
 import java.util.Locale
 
 /**
@@ -58,6 +59,7 @@ class FlywheelCalibration : LinearOpMode() {
         }
 
         while (opModeIsActive()) {
+            NextMotor.motorEventLoop.poll()
             if (gamepad1.dpad_up && !lastDpadUp && stepIdx < rpmSteps.size - 1) {
                 stepIdx++; fineRpm = 0.0
             }
@@ -75,8 +77,10 @@ class FlywheelCalibration : LinearOpMode() {
             // Feed exactly one ball: run the intake briefly while filming.
             if (gamepad1.x && !lastX) {
                 intake.spinUp(1.0)
+                NextMotor.motorEventLoop.poll()
                 sleep(FLYWHEEL_FEED_TIME_MS.toLong())
                 intake.stop()
+                NextMotor.motorEventLoop.poll()
             }
 
             telemetry.addData("Commanded", String.format(Locale.US, "%.0f RPM", rpm))
@@ -105,5 +109,6 @@ class FlywheelCalibration : LinearOpMode() {
 
         flywheel.stop(breakMotor = true)
         intake.stop()
+        NextMotor.motorEventLoop.poll()
     }
 }

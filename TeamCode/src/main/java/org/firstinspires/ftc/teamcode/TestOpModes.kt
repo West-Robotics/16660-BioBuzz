@@ -503,6 +503,8 @@ class DrivetrainSetupOpMode : LinearOpMode() {
         var base = snapshot()
 
         while (opModeIsActive()) {
+            // Position/velocity moves through NextFTC need the event loop polled.
+            dev.nextftc.hardware.actuators.NextMotor.motorEventLoop.poll()
             val now = snapshot()
 
             // ---- A: 1-second spin test ----
@@ -517,7 +519,7 @@ class DrivetrainSetupOpMode : LinearOpMode() {
                     val ticks = after[i] - base[i]
                     val expectedSign = if (i == 1 || i == 3) "-" else "+" // FR/BR face backward
                     telemetry.addData(
-                        "$names[i] spin",
+                        "${names[i]} spin",
                         "%+d ticks (%s fwd expected; ~%.0f%% of %.0f t/rev)".format(
                             ticks, expectedSign,
                             kotlin.math.abs(ticks).toDouble() / DrivetrainSpec.driveTicksPerWheelRev * 100.0,
@@ -533,7 +535,14 @@ class DrivetrainSetupOpMode : LinearOpMode() {
             if (gamepad1.b && !lastB) {
                 base = snapshot()
                 drivetrain.driveForward(50.0, 0.25)
-                sleep(4000)
+                // Poll while waiting, or the position controller never moves the motors.
+                val crawlEnd = System.currentTimeMillis() + 4000
+                while (System.currentTimeMillis() < crawlEnd) {
+                    dev.nextftc.hardware.actuators.NextMotor.motorEventLoop.poll()
+                    sleep(20)
+                }
+                drivetrain.flushMotors()
+                dev.nextftc.hardware.actuators.NextMotor.motorEventLoop.poll()
                 val after = snapshot()
                 telemetry.addData(
                     "50cm crawl",
@@ -577,5 +586,6 @@ class DrivetrainSetupOpMode : LinearOpMode() {
         }
 
         drivetrain.flushMotors()
+        dev.nextftc.hardware.actuators.NextMotor.motorEventLoop.poll()
     }
 }
