@@ -271,12 +271,16 @@ const val FLOWER_SETTLE_AFTER_PULL_MS = 600L // intake time to swallow the relea
  */
 var flowerPullRoutine: (Intake, Loader) -> Unit = { intake, _ ->
     intake.spinUp(-1.0)
+    // The NextFTC event loop must be polled or the spinUp setpoint never
+    // reaches the motor during the blind sleep below.
+    dev.nextftc.hardware.actuators.NextMotor.motorEventLoop.poll()
     try {
         Thread.sleep(1000)
     } catch (_: InterruptedException) {
         Thread.currentThread().interrupt()
     }
     intake.stop()
+    dev.nextftc.hardware.actuators.NextMotor.motorEventLoop.poll()
 }
 
 /** Type of ball collected, for the ball counter. UNKNOWN = source cannot identify type (e.g. beam-break sensor). */

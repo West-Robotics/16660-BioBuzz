@@ -5,6 +5,7 @@ import com.acmerobotics.roadrunner.PoseVelocity2d
 import com.acmerobotics.roadrunner.Vector2d
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
+import dev.nextftc.hardware.actuators.NextMotor
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.teamcode.vision.VisionTuning
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor
@@ -162,6 +163,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
 
         try {
             while (opModeIsActive()) {
+                NextMotor.motorEventLoop.poll()
                 val elapsed = runtime - clockStartRuntime
                 val remaining = (MATCH_TELEOP_SECONDS - elapsed).coerceAtLeast(0.0)
                 val now = System.nanoTime()
@@ -263,6 +265,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
             drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), 0.0))
             intake.stop()
             flywheel.stop()
+            NextMotor.motorEventLoop.poll()
             vision.close()
             BlackBox.stop()
         }

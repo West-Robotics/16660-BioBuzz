@@ -8,6 +8,7 @@ import com.acmerobotics.roadrunner.Vector2d
 import com.pedropathing.ivy.behaviors.EndCondition
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
+import dev.nextftc.hardware.actuators.NextMotor
 import org.firstinspires.ftc.teamcode.roadrunner.MecanumDrive
 import org.firstinspires.ftc.teamcode.vision.VisionSubsystem
 import org.firstinspires.ftc.teamcode.vision.VisionTuning
@@ -157,6 +158,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             var totalScored = 0
             while (opModeIsActive()) {
                 cycle++
+                NextMotor.motorEventLoop.poll()
                 BlackBox.event("cycle_start", "cycle" to cycle, "remainingSec" to clock.remainingSec())
                 telemetry.addData("AUTO CYCLE", cycle)
                 telemetry.addData("Clock", "%.1fs left".format(clock.remainingSec()))
@@ -252,6 +254,7 @@ class BioBuzzAutonomous : LinearOpMode() {
             drive.setDrivePowers(PoseVelocity2d(Vector2d(0.0, 0.0), 0.0))
             intake.stop()
             flywheel.stop()
+            NextMotor.motorEventLoop.poll()
             vision.close()
             BlackBox.event("auto_end")
             BlackBox.stop()
@@ -269,6 +272,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         val packet = TelemetryPacket()
         var running = true
         while (running && opModeIsActive()) {
+            NextMotor.motorEventLoop.poll()
             running = action.run(packet) // also updates pose (and vision correction)
             vision.updateRoadRunnerPose(drive.pose)
             report()
@@ -286,6 +290,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         val cmd = visionGuidance(drive, vision)
         cmd.start()
         while (!cmd.done() && opModeIsActive()) {
+            NextMotor.motorEventLoop.poll()
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
             cmd.execute()
@@ -328,6 +333,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         // on jams, brakes hard when fully jammed) — a jam can no longer stall
         // the phase silently.
         while (opModeIsActive() && collected < MAX_BALLS_HELD && System.nanoTime() < deadlineNanos) {
+            NextMotor.motorEventLoop.poll()
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
             report() // fuses sightings + hive into the WorldModel (and Black Box)
@@ -543,6 +549,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         var positioned = false
 
         while (opModeIsActive() && System.nanoTime() < deadlineNanos) {
+            NextMotor.motorEventLoop.poll()
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
             val now = System.nanoTime()
@@ -605,6 +612,7 @@ class BioBuzzAutonomous : LinearOpMode() {
 
         // Give the released ball time to settle into the intake.
         intake.spinUp(1.0)
+        NextMotor.motorEventLoop.poll()
         sleep(FLOWER_SETTLE_AFTER_PULL_MS)
         intake.stop()
         return true
@@ -618,6 +626,7 @@ class BioBuzzAutonomous : LinearOpMode() {
      */
     private fun alignToHive(deadlineNanos: Long): Boolean {
         while (opModeIsActive() && System.nanoTime() < deadlineNanos) {
+            NextMotor.motorEventLoop.poll()
             drive.updatePoseEstimate()
             vision.updateRoadRunnerPose(drive.pose)
 
@@ -691,6 +700,7 @@ class BioBuzzAutonomous : LinearOpMode() {
         val spinDeadline = System.nanoTime() +
             (clock.remainingSec().coerceAtMost(AUTONOMY_FIRE_RESERVE_SEC) * 1e9).toLong()
         while (opModeIsActive() && !flywheel.isAtSpeed(rpm) && System.nanoTime() < spinDeadline) {
+            NextMotor.motorEventLoop.poll()
             telemetry.addData("PHASE 4", "spinning up to %.0f RPM".format(rpm))
             telemetry.addData(
                 "Measured L/R",
@@ -754,6 +764,7 @@ class BioBuzzAutonomous : LinearOpMode() {
 
     /** Combined telemetry: hive range/angle, RR (fused) pose, vision health. */
     private fun report(target: HiveTarget? = null) {
+        NextMotor.motorEventLoop.poll()
         val t = target ?: hive.update()
         tagOverlay.publish(t)
         hive.addTelemetry(telemetry, t)
