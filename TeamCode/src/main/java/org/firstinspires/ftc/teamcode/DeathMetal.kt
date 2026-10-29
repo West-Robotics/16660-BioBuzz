@@ -11,36 +11,23 @@ import com.qualcomm.robotcore.hardware.Servo
 
 
 
-class DeathMetal(val hardwareMap: HardwareMap){
+class DeathMetal(val hardwareMap: HardwareMap) {
 
 
 
-    val left = hardwareMap.get ("left") as DcMotorEx
-    val right = hardwareMap.get ("right") as DcMotorEx
 
-
-    fun init(){
-        left.direction = DcMotorSimple.Direction.FORWARD
-        right.direction = DcMotorSimple.Direction.REVERSE
-        left.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
-        right.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
-    }
-
-    fun spin(spin:Double){
-        left.power = spin
-        right.power = spin
-    }
-
-
-    fun wings(){
+    fun init() {
 
     }
 
+    fun spin(spin: Double) {
+
+    }
+
+    fun feed(feed: Double) {
 
 
-
-
-
-
+    }
 }
+
 
