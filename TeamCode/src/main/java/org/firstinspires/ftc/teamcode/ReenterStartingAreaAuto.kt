@@ -5,6 +5,7 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.hardware.DcMotor
 import com.qualcomm.robotcore.hardware.DcMotorSimple
 import com.qualcomm.robotcore.util.ElapsedTime
+import kotlin.math.abs
 
 @Autonomous(name = "Reenter Starting Area Auto", group = "Pushbot")
 class ReenterStartingAreaAuto : LinearOpMode() {
@@ -62,7 +63,7 @@ class ReenterStartingAreaAuto : LinearOpMode() {
     }
 
     private fun driveStraight(distanceCm: Double, speed: Double) {
-        val targetTimeSec = abs(distanceCm) / CM_PER_SECOND
+        val targetTimeSec = kotlin.math.abs(distanceCm) / CM_PER_SECOND
         val power = if (distanceCm >= 0) speed else -speed
 
         timer.reset()

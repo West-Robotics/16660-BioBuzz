@@ -4,6 +4,8 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
 import com.qualcomm.robotcore.hardware.DcMotor
 import com.qualcomm.robotcore.hardware.DcMotorSimple
+import kotlin.math.abs
+import kotlin.ranges.coerceIn
 
 @TeleOp(name = "Pushbot TeleOp", group = "Pushbot")
 class PushbotTeleOp : LinearOpMode() {
@@ -40,15 +42,15 @@ class PushbotTeleOp : LinearOpMode() {
 
         while (opModeIsActive()) {
             // --- Gamepad input ---
-            val forward = -gamepad1.left_stick_y
-            val strafe  = gamepad1.left_stick_x
-            val turn    = gamepad1.right_stick_x
+            val forward = -gamepad1.left_stick_y.toDouble()
+            val strafe  = gamepad1.left_stick_x.toDouble()
+            val turn    = gamepad1.right_stick_x.toDouble()
 
             // Deadzone
             val deadzone = 0.08
-            val f = if (abs(forward) > deadzone) forward else 0.0
-            val s = if (abs(strafe) > deadzone) strafe else 0.0
-            val t = if (abs(turn) > deadzone) turn else 0.0
+            val f = if (kotlin.math.abs(forward) > deadzone) forward else 0.0
+            val s = if (kotlin.math.abs(strafe) > deadzone) strafe else 0.0
+            val t = if (kotlin.math.abs(turn) > deadzone) turn else 0.0
 
             // --- Mecanum mixing ---
             val flPower = (f + s + t).coerceIn(-1.0, 1.0)
