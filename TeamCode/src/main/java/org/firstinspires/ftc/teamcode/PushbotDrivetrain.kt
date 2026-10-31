@@ -30,7 +30,7 @@ val PUSHBOT_BR_DIR = DcMotorSimple.Direction.REVERSE
 //         an encoder wire comes loose
 // true  = velocity PID (RUN_USING_ENCODER): a dead/loose encoder can
 //         FREEZE that motor, so enable only after encoders pass the test
-const val PUSHBOT_USE_ENCODERS = false
+const val PUSHBOT_USE_ENCODERS = true
 
 class PushbotDrivetrain(hardwareMap: HardwareMap) {
 
