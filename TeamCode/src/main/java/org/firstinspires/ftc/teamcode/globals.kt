@@ -32,8 +32,8 @@ val TrackWidthCm: Double = DrivetrainSpec.TRACK_WIDTH_CM
 // and position control read TRUE wheel/motor speed. VERIFY each CPR against the
 // spec sheet that ships in the goBILDA box before trusting closed-loop tuning.
 
-// -- Drivetrain: 4x 117 RPM (5203-2402-0051), mecanum --
-const val DRIVE_MOTOR_MAX_RPM = 117.0
+// -- Drivetrain: 4x 312 RPM (5203-2402-0019), mecanum --
+const val DRIVE_MOTOR_MAX_RPM = 312.0
 // DERIVED from DrivetrainSpec (motor CPR x gearbox ratio) — no hand math.
 val DRIVE_MOTOR_ENCODER_CPR = DrivetrainSpec.driveTicksPerWheelRev
 
@@ -219,6 +219,12 @@ const val GROUND_CAM_WIDTH = 640
 const val GROUND_CAM_HEIGHT = 480
 const val C270_FOCAL_LENGTH_PIXELS = 543.0
 const val C270_HORIZONTAL_FOV_DEGREES = 47.0
+
+// ================== CAMERA FRAME CAPTURE (for post-match analysis) ==================
+const val FRAME_CAPTURE_ENABLED = true           // master toggle
+const val FRAME_CAPTURE_FPS = 5                  // max frames/sec per camera
+const val FRAME_CAPTURE_MAX_MB = 200             // total budget across both cameras
+const val FRAME_CAPTURE_DIR = "CameraFrames"     // subfolder under /sdcard/FIRST/
 const val POLLEN_PHYSICAL_WIDTH_MM = 71.12
 const val NECTAR_PHYSICAL_WIDTH_MM = 91.44
 const val APRILTAG_PHYSICAL_WIDTH_MM = 82.55 // 3.25 inches

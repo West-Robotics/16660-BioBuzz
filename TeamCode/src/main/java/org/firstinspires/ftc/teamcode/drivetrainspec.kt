@@ -29,32 +29,32 @@ object DrivetrainSpec {
 
     // -- Drive wheels (goBILDA 5203-series Yellow Jackets, mecanum) --
     /** MEASURE: wheel diameter at the ground, cm (loaded, not nominal). */
-    const val DRIVE_WHEEL_DIAMETER_CM = 5.0
+    const val DRIVE_WHEEL_DIAMETER_CM = 10.4
     /** SPEC SHEET: motor-shaft encoder counts per revolution. */
     const val DRIVE_MOTOR_CPR = 28.0
-    /** SPEC SHEET: gearbox reduction (motor revs per wheel rev). */
-    const val DRIVE_GEAR_RATIO = 51.46
+    /** SPEC SHEET: gearbox reduction (motor revs per wheel rev). 312 RPM = 19.2:1. */
+    const val DRIVE_GEAR_RATIO = 19.2
     /** MEASURE: left/right wheel contact-point center distance, cm. */
-    const val TRACK_WIDTH_CM = 87.0
+    const val TRACK_WIDTH_CM = 42.0
     /** MEASURE: front/rear axle center distance, cm. */
-    const val WHEELBASE_CM = 87.0
+    const val WHEELBASE_CM = 32.0
     /** MEASURE: how much a loaded mecanum slides sideways vs driving (1.0 = ideal). */
     const val MECANUM_LATERAL_SLIP = 1.0
 
     // -- Dead-wheel odometry pods (bolt on: par0 / par1 / perp motors) --
-    /** MEASURE: odometry pod wheel diameter, cm (goBILDA 4-bar: ~35mm). */
-    const val DEAD_WHEEL_DIAMETER_CM = 3.5
-    /** SPEC SHEET: odometry pod counts per rev (goBILDA 4-bar: 2000). */
-    const val DEAD_WHEEL_TICKS_PER_REV = 2000.0
+    /** MEASURE: odometry pod wheel diameter, cm (SWYFT Linear Odometry Module: 38mm). */
+    const val DEAD_WHEEL_DIAMETER_CM = 3.8
+    /** SPEC SHEET: odometry pod counts per rev (SWYFT: 4096 PPR quadrature). */
+    const val DEAD_WHEEL_TICKS_PER_REV = 4096.0
     /** MEASURE: par0 position from the drive center, cm (+x forward, +y left). */
-    const val PAR0_X_CM = 0.0
-    const val PAR0_Y_CM = 15.2
+    const val PAR0_X_CM = -16.0
+    const val PAR0_Y_CM = 8.5
     /** MEASURE: par1 position from the drive center, cm. */
-    const val PAR1_X_CM = 0.0
-    const val PAR1_Y_CM = -15.2
+    const val PAR1_X_CM = -16.0
+    const val PAR1_Y_CM = -8.5
     /** MEASURE: perp position from the drive center, cm. */
-    const val PERP_X_CM = -15.2
-    const val PERP_Y_CM = 0.0
+    const val PERP_X_CM = -1.0
+    const val PERP_Y_CM = 21.0
     /**
      * True when the pod's encoder COUNTS UP while the robot is pushed
      * FORWARD (par/perp) / LEFT (perp). Determined by which way you plugged
