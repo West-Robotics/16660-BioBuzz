@@ -79,8 +79,9 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
         // IMU orientation
         // TODO: fill in these values based on the physical Control/Expansion Hub mounting.
         //   see https://ftc-docs.firstinspires.org/en/latest/programming_resources/imu/imu.html
-        var logoFacingDirection = RevHubOrientationOnRobot.LogoFacingDirection.UP
-        var usbFacingDirection = RevHubOrientationOnRobot.UsbFacingDirection.FORWARD
+        // Hub mounted on LEFT side, pointing INWARD (logo faces RIGHT), USB ports UP
+        var logoFacingDirection = RevHubOrientationOnRobot.LogoFacingDirection.RIGHT
+        var usbFacingDirection = RevHubOrientationOnRobot.UsbFacingDirection.UP
 
         // drive model parameters (defaults COMPUTED from DrivetrainSpec's
         // physical measurements; fine-tune live via FTC Dashboard after that)
@@ -136,7 +137,7 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
 
     val voltageSensor: VoltageSensor
 
-    val lazyImu: com.acmerobotics.roadrunner.ftc.LazyImu
+    val lazyImu: com.acmerobotics.roadrunner.ftc.LazyImu?
 
     /** Pluggable localization; defaults to mecanum + IMU. Swappable for dead wheels / Pinpoint. */
     var localizer: Localizer
@@ -162,13 +163,20 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
     private val driveCommandWriter = DownsampledWriter("DRIVE_COMMAND", 50_000_000)
     private val mecanumCommandWriter = DownsampledWriter("MECANUM_COMMAND", 50_000_000)
 
-    /** Mecanum + IMU localizer (Road Runner 1.0 quickstart algorithm, Kotlin port). */
-    inner class DriveLocalizer(initialPose: Pose2d) : Localizer {
+    /**
+     * Mecanum + IMU localizer (Road Runner 1.0 quickstart algorithm, Kotlin port).
+     * If IMU is available, uses it for heading.
+     * If IMU is MISSING, integrates heading from mecanum kinematics omega.
+     */
+    inner class DriveLocalizer(
+        initialPose: Pose2d,
+        private val imuAvailable: Boolean,
+    ) : Localizer {
         val leftFront = OverflowEncoder(RawEncoder(this@MecanumDrive.leftFront))
         val leftBack = OverflowEncoder(RawEncoder(this@MecanumDrive.leftBack))
         val rightBack = OverflowEncoder(RawEncoder(this@MecanumDrive.rightBack))
         val rightFront = OverflowEncoder(RawEncoder(this@MecanumDrive.rightFront))
-        val imu: IMU = lazyImu.get()
+        private val imu: IMU? = if (imuAvailable) lazyImu?.get() else null
 
         private var lastLeftFrontPos = 0
         private var lastLeftBackPos = 0
@@ -190,31 +198,84 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
             val rightBackPosVel = rightBack.getPositionAndVelocity()
             val rightFrontPosVel = rightFront.getPositionAndVelocity()
 
-            val angles: YawPitchRollAngles = imu.robotYawPitchRollAngles
+            var heading: Rotation2d
+            var headingDelta: Double
 
-            FlightRecorder.write(
-                "MECANUM_LOCALIZER_INPUTS",
-                MecanumLocalizerInputsMessage(
-                    leftFrontPosVel, leftBackPosVel, rightBackPosVel, rightFrontPosVel, angles,
-                ),
-            )
+            if (imuAvailable && imu != null) {
+                val angles: YawPitchRollAngles = imu.robotYawPitchRollAngles
+                heading = Rotation2d.exp(angles.getYaw(AngleUnit.RADIANS))
 
-            val heading = Rotation2d.exp(angles.getYaw(AngleUnit.RADIANS))
+                FlightRecorder.write(
+                    "MECANUM_LOCALIZER_INPUTS",
+                    MecanumLocalizerInputsMessage(
+                        leftFrontPosVel, leftBackPosVel, rightBackPosVel, rightFrontPosVel, angles,
+                    ),
+                )
 
-            if (!initialized) {
-                initialized = true
-
-                lastLeftFrontPos = leftFrontPosVel.position
-                lastLeftBackPos = leftBackPosVel.position
-                lastRightBackPos = rightBackPosVel.position
-                lastRightFrontPos = rightFrontPosVel.position
-
+                if (!initialized) {
+                    initialized = true
+                    lastLeftFrontPos = leftFrontPosVel.position
+                    lastLeftBackPos = leftBackPosVel.position
+                    lastRightBackPos = rightBackPosVel.position
+                    lastRightFrontPos = rightFrontPosVel.position
+                    lastHeading = heading
+                    return PoseVelocity2d(Vector2d(0.0, 0.0), 0.0)
+                }
+                headingDelta = heading.minus(lastHeading)
                 lastHeading = heading
+            } else {
+                // DEGRADED PATH: integrate heading from mecanum kinematics omega
+                heading = lastHeading
 
-                return PoseVelocity2d(Vector2d(0.0, 0.0), 0.0)
+                val kinematics = MecanumKinematics(
+                    PARAMS.inPerTick, PARAMS.lateralInPerTick, PARAMS.trackWidthTicks
+                )
+                val wheelIncrements = MecanumKinematics.WheelIncrements(
+                    DualNum<Time>(
+                        doubleArrayOf(
+                            (leftFrontPosVel.velocity ?: 0).toDouble(),
+                            (leftFrontPosVel.velocity ?: 0).toDouble(),
+                        )
+                    ).times(PARAMS.inPerTick),
+                    DualNum<Time>(
+                        doubleArrayOf(
+                            (leftBackPosVel.velocity ?: 0).toDouble(),
+                            (leftBackPosVel.velocity ?: 0).toDouble(),
+                        )
+                    ).times(PARAMS.inPerTick),
+                    DualNum<Time>(
+                        doubleArrayOf(
+                            (rightBackPosVel.velocity ?: 0).toDouble(),
+                            (rightBackPosVel.velocity ?: 0).toDouble(),
+                        )
+                    ).times(PARAMS.inPerTick),
+                    DualNum<Time>(
+                        doubleArrayOf(
+                            (rightFrontPosVel.velocity ?: 0).toDouble(),
+                            (rightFrontPosVel.velocity ?: 0).toDouble(),
+                        )
+                    ).times(PARAMS.inPerTick),
+                )
+                val twist = kinematics.forward(wheelIncrements)
+                val vel: PoseVelocity2d = twist.velocity().value()
+                val omega: Double = vel.component2()
+
+                FlightRecorder.write(
+                    "MECANUM_LOCALIZER_INPUTS_DEGRADED",
+                    MecanumLocalizerInputsMessage(leftFrontPosVel, leftBackPosVel, rightBackPosVel, rightFrontPosVel, null),
+                )
+
+                if (!initialized) {
+                    initialized = true
+                    lastLeftFrontPos = leftFrontPosVel.position
+                    lastLeftBackPos = leftBackPosVel.position
+                    lastRightBackPos = rightBackPosVel.position
+                    lastRightFrontPos = rightFrontPosVel.position
+                    return PoseVelocity2d(Vector2d(0.0, 0.0), 0.0)
+                }
+                headingDelta = omega * (1.0 / 50.0)
             }
 
-            val headingDelta = heading.minus(lastHeading)
             val twist: Twist2dDual<Time> = kinematics.forward(
                 MecanumKinematics.WheelIncrements(
                     DualNum<Time>(
@@ -262,31 +323,24 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
         private set
 
     /**
-     * 3-dead-wheel + IMU localizer. Two parallel wheels + one perpendicular
-     * (the classic FTC odometry pod layout). The IMU supplies heading —
-     * dead wheels are trusted only for translation, which they do without
-     * mecanum slip.
-     *
-     * Wheel model: a wheel at robot-frame offset (x, y) with rolling
-     * direction (cos θ, sin θ) reads
-     *     d = cos θ·dx + sin θ·dy + (x·sin θ − y·cos θ)·δ
-     * for body displacement (dx, dy, δ). Position increments solve that
-     * over-determined system by least squares with δ taken from the IMU;
-     * velocities solve the same equations exactly for (vx, vy, ω).
+     * 3-dead-wheel localizer. Two parallel wheels + one perpendicular.
+     * If IMU is available, uses it for heading (like classic RR).
+     * If IMU is MISSING, integrates heading from dead-wheel velocity omega
+     * (computed from the 3-wheel kinematics). Works in degraded mode.
      */
     inner class DeadWheelLocalizer(
         initialPose: Pose2d,
         par0Motor: DcMotorEx,
         par1Motor: DcMotorEx,
         perpMotor: DcMotorEx,
+        private val imuAvailable: Boolean,
     ) : Localizer {
         private val par0 = OverflowEncoder(RawEncoder(par0Motor))
         private val par1 = OverflowEncoder(RawEncoder(par1Motor))
         private val perp = OverflowEncoder(RawEncoder(perpMotor))
-        private val imu: IMU = lazyImu.get()
+        private val imu: IMU? = if (imuAvailable) lazyImu?.get() else null
 
         private val inPerTick = DrivetrainSpec.deadWheelInPerTick
-
         private val wheels = DrivetrainSpec.deadWheelsIn()
         private val reversed = DrivetrainSpec.deadWheelReversed()
 
@@ -307,25 +361,52 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
                 par1.getPositionAndVelocity(),
                 perp.getPositionAndVelocity(),
             )
-            val angles: YawPitchRollAngles = imu.robotYawPitchRollAngles
 
-            FlightRecorder.write(
-                "DEADWHEEL_LOCALIZER_INPUTS",
-                DeadWheelLocalizerInputsMessage(pv[0], pv[1], pv[2], angles),
-            )
+            // Velocity from 3-wheel kinematics (works with or without IMU)
+            val measuredVel = List(3) { i ->
+                DeadWheelMath.signed((pv[i].velocity ?: 0).toDouble() * inPerTick, reversed[i])
+            }
+            val (vx, vy, omega) = DeadWheelMath.velocity(wheels, measuredVel)
 
-            val heading = Rotation2d.exp(angles.getYaw(AngleUnit.RADIANS))
+            var heading: Rotation2d
+            var headingDelta: Double
 
-            if (!initialized) {
-                initialized = true
-                for (i in 0..2) lastPos[i] = pv[i].position
+            if (imuAvailable && imu != null) {
+                // IMU path: use IMU for heading
+                val angles: YawPitchRollAngles = imu.robotYawPitchRollAngles
+                heading = Rotation2d.exp(angles.getYaw(AngleUnit.RADIANS))
+
+                FlightRecorder.write(
+                    "DEADWHEEL_LOCALIZER_INPUTS",
+                    DeadWheelLocalizerInputsMessage(pv[0], pv[1], pv[2], angles),
+                )
+
+                if (!initialized) {
+                    initialized = true
+                    for (i in 0..2) lastPos[i] = pv[i].position
+                    lastHeading = heading
+                    return PoseVelocity2d(Vector2d(0.0, 0.0), 0.0)
+                }
+                headingDelta = heading.minus(lastHeading)
                 lastHeading = heading
-                return PoseVelocity2d(Vector2d(0.0, 0.0), 0.0)
+            } else {
+                // DEGRADED PATH: integrate heading from dead-wheel omega
+                heading = lastHeading
+                headingDelta = omega * (1.0 / 50.0) // assume 50Hz loop; omega is rad/s
+
+                FlightRecorder.write(
+                    "DEADWHEEL_LOCALIZER_INPUTS_DEGRADED",
+                    DeadWheelLocalizerInputsMessage(pv[0], pv[1], pv[2], null),
+                )
+
+                if (!initialized) {
+                    initialized = true
+                    for (i in 0..2) lastPos[i] = pv[i].position
+                    return PoseVelocity2d(Vector2d(0.0, 0.0), 0.0)
+                }
             }
 
-            val headingDelta = heading.minus(lastHeading)
-
-            // position increment: least squares for (dx, dy) with IMU delta
+            // position increment: least squares for (dx, dy) with heading delta
             val measured = List(3) { i ->
                 DeadWheelMath.signed((pv[i].position - lastPos[i]) * inPerTick, reversed[i])
             }
@@ -335,12 +416,6 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
             lastHeading = heading
 
             pose = pose.plus(Twist2d(Vector2d(dx, dy), headingDelta))
-
-            // velocity: exact 3x3 solve for (vx, vy, omega)
-            val measuredVel = List(3) { i ->
-                DeadWheelMath.signed((pv[i].velocity ?: 0).toDouble() * inPerTick, reversed[i])
-            }
-            val (vx, vy, omega) = DeadWheelMath.velocity(wheels, measuredVel)
             return PoseVelocity2d(Vector2d(vx, vy), omega)
         }
     }
@@ -366,11 +441,16 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
         // TODO: reverse motor directions if needed
         //   leftFront.direction = DcMotorSimple.Direction.REVERSE
 
-        lazyImu = LazyHardwareMapImu(
-            hardwareMap,
-            RR_IMU_NAME,
-            RevHubOrientationOnRobot(PARAMS.logoFacingDirection, PARAMS.usbFacingDirection),
-        )
+        // IMU is OPTIONAL — try to get it, but don't crash if not configured.
+        lazyImu = try {
+            LazyHardwareMapImu(
+                hardwareMap,
+                RR_IMU_NAME,
+                RevHubOrientationOnRobot(PARAMS.logoFacingDirection, PARAMS.usbFacingDirection),
+            )
+        } catch (_: Exception) {
+            null
+        }
 
         voltageSensor = hardwareMap.voltageSensor.iterator().next()
 
@@ -381,10 +461,11 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
         val par1Motor = tryGetMotor(hardwareMap, DEAD_WHEEL_PAR1_NAME)
         val perpMotor = tryGetMotor(hardwareMap, DEAD_WHEEL_PERP_NAME)
         usingDeadWheels = par0Motor != null && par1Motor != null && perpMotor != null
+        val imuAvailable = lazyImu != null
         localizer = if (usingDeadWheels) {
-            DeadWheelLocalizer(initialPose, par0Motor!!, par1Motor!!, perpMotor!!)
+            DeadWheelLocalizer(initialPose, par0Motor!!, par1Motor!!, perpMotor!!, imuAvailable)
         } else {
-            DriveLocalizer(initialPose)
+            DriveLocalizer(initialPose, imuAvailable)
         }
 
         FlightRecorder.write("MECANUM_PARAMS", PARAMS)

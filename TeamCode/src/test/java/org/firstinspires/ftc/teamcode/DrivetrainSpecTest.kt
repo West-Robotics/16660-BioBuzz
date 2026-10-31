@@ -12,8 +12,8 @@ class DrivetrainSpecTest {
 
     @Test
     fun `ticks per wheel rev is CPR times gear ratio`() {
-        // 28-count motor encoder through the 51.46:1 gearbox
-        assertEquals(28.0 * 51.46, DrivetrainSpec.driveTicksPerWheelRev, 1e-9)
+        // 28-count motor encoder through the 19.2:1 gearbox (312 RPM)
+        assertEquals(28.0 * 19.2, DrivetrainSpec.driveTicksPerWheelRev, 1e-9)
     }
 
     @Test

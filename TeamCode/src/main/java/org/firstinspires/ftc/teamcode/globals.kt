@@ -32,7 +32,7 @@ val TrackWidthCm: Double = DrivetrainSpec.TRACK_WIDTH_CM
 // spec sheet that ships in the goBILDA box before trusting closed-loop tuning.
 
 // -- Drivetrain: 4x 117 RPM (5203-2402-0051), mecanum --
-const val DRIVE_MOTOR_MAX_RPM = 117.0
+const val DRIVE_MOTOR_MAX_RPM = 312.0
 // DERIVED from DrivetrainSpec (motor CPR x gearbox ratio) — no hand math.
 val DRIVE_MOTOR_ENCODER_CPR = DrivetrainSpec.driveTicksPerWheelRev
 
@@ -124,6 +124,12 @@ const val SHOT_PREDICTOR_FILE = "nn/shot_predictor.json"
 // and blackbox.kt before using in official play.
 const val BLACKBOX_ENABLED = true          // master switch
 const val BLACKBOX_FRAME_CAPTURE_FPS = 5.0 // JPEG frames/sec saved PER camera
+
+// ================== CAMERA FRAME CAPTURE (for post-match analysis) ==================
+const val FRAME_CAPTURE_ENABLED = true           // master toggle
+const val FRAME_CAPTURE_FPS = 5                  // max frames/sec per camera
+const val FRAME_CAPTURE_MAX_MB = 200             // total budget across both cameras
+const val FRAME_CAPTURE_DIR = "CameraFrames"     // subfolder under /sdcard/FIRST/
 const val BLACKBOX_MAX_SESSION_MB = 400.0   // storage budget per OpMode run
 const val BLACKBOX_STATE_LOG_HZ = 10.0     // state lines per second
 

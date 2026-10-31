@@ -42,22 +42,22 @@ class MecanumLocalizerInputsMessage(
     val leftBack: PositionVelocityPair,
     val rightBack: PositionVelocityPair,
     val rightFront: PositionVelocityPair,
-    angles: YawPitchRollAngles,
+    angles: YawPitchRollAngles?,
 ) {
     val timestamp = System.nanoTime()
-    val yaw = angles.getYaw(AngleUnit.RADIANS)
-    val pitch = angles.getPitch(AngleUnit.RADIANS)
-    val roll = angles.getRoll(AngleUnit.RADIANS)
+    val yaw = angles?.getYaw(AngleUnit.RADIANS) ?: 0.0
+    val pitch = angles?.getPitch(AngleUnit.RADIANS) ?: 0.0
+    val roll = angles?.getRoll(AngleUnit.RADIANS) ?: 0.0
 }
 
 class DeadWheelLocalizerInputsMessage(
     val par0: PositionVelocityPair,
     val par1: PositionVelocityPair,
     val perp: PositionVelocityPair,
-    angles: YawPitchRollAngles,
+    angles: YawPitchRollAngles?,
 ) {
     val timestamp = System.nanoTime()
-    val yaw = angles.getYaw(AngleUnit.RADIANS)
-    val pitch = angles.getPitch(AngleUnit.RADIANS)
-    val roll = angles.getRoll(AngleUnit.RADIANS)
+    val yaw = angles?.getYaw(AngleUnit.RADIANS) ?: 0.0
+    val pitch = angles?.getPitch(AngleUnit.RADIANS) ?: 0.0
+    val roll = angles?.getRoll(AngleUnit.RADIANS) ?: 0.0
 }
