@@ -3,60 +3,57 @@ package org.firstinspires.ftc.teamcode
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.hardware.DcMotor
+import com.qualcomm.robotcore.hardware.DcMotorEx
 import com.qualcomm.robotcore.hardware.DcMotorSimple
 import com.qualcomm.robotcore.util.ElapsedTime
-import kotlin.math.abs
 
 @Autonomous(name = "Reenter Starting Area Auto", group = "Pushbot")
 class ReenterStartingAreaAuto : LinearOpMode() {
 
-    private lateinit var fl: DcMotor
-    private lateinit var fr: DcMotor
-    private lateinit var bl: DcMotor
-    private lateinit var br: DcMotor
+    private lateinit var fl: DcMotorEx
+    private lateinit var fr: DcMotorEx
+    private lateinit var bl: DcMotorEx
+    private lateinit var br: DcMotorEx
 
     private val timer = ElapsedTime()
 
-    // Tunable - adjust after measuring actual distance
+    // Tune these after measuring actual distance
     private val FORWARD_DISTANCE_CM = 50.0
-    private val DRIVE_SPEED = 0.4
-    private val CM_PER_SECOND = 50.0  // Measure and tune this
+    private val DRIVE_SPEED = 0.5
+    private val CM_PER_SECOND = 60.0  // Measure and tune this
 
     override fun runOpMode() {
-        // --- Hardware (names must match Robot Config) ---
-        fl = hardwareMap.get(DcMotor::class.java, "frontleft")
-        fr = hardwareMap.get(DcMotor::class.java, "frontright")
-        bl = hardwareMap.get(DcMotor::class.java, "backleft")
-        br = hardwareMap.get(DcMotor::class.java, "backright")
+        // --- Hardware ---
+        fl = hardwareMap.get(DcMotorEx::class.java, "frontleft")
+        fr = hardwareMap.get(DcMotorEx::class.java, "frontright")
+        bl = hardwareMap.get(DcMotorEx::class.java, "backleft")
+        br = hardwareMap.get(DcMotorEx::class.java, "backright")
 
-        // Motor directions - VERIFY WITH SPIN TEST
-        fl.direction = DcMotorSimple.Direction.FORWARD
-        fr.direction = DcMotorSimple.Direction.REVERSE
-        bl.direction = DcMotorSimple.Direction.FORWARD
-        br.direction = DcMotorSimple.Direction.REVERSE
-
-        // Raw power mode (no encoders)
+        // Encoder mode for velocity control
         listOf(fl, fr, bl, br).forEach {
-            it.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
+            it.mode = DcMotor.RunMode.RUN_USING_ENCODER
             it.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
         }
 
+        // Same directions as TeleOp - match the working configuration
+        fl.direction = DcMotorSimple.Direction.FORWARD
+        fr.direction = DcMotorSimple.Direction.REVERSE
+        bl.direction = DcMotorSimple.Direction.REVERSE   // Match TeleOp
+        br.direction = DcMotorSimple.Direction.FORWARD  // Match TeleOp
+
         telemetry.addLine("Reenter Starting Area Auto")
-        telemetry.addLine("Press START to begin")
+        telemetry.addLine("Press START: forward 50cm -> back 50cm")
         telemetry.update()
 
         waitForStart()
 
-        // --- Step 1: Drive forward 50 cm ---
+        // Forward 50cm
         driveStraight(FORWARD_DISTANCE_CM, DRIVE_SPEED)
-
-        // --- Step 2: Brief pause ---
         sleep(300)
 
-        // --- Step 3: Drive backward 50 cm (re-enter starting area) ---
+        // Backward 50cm (re-enter starting area)
         driveStraight(-FORWARD_DISTANCE_CM, DRIVE_SPEED)
 
-        // Stop
         stopMotors()
         telemetry.addLine("Done - back in starting area")
         telemetry.update()

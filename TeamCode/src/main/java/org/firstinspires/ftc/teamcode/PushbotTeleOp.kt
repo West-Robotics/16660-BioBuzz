@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
 import com.qualcomm.robotcore.hardware.DcMotor
+import com.qualcomm.robotcore.hardware.DcMotorEx
 import com.qualcomm.robotcore.hardware.DcMotorSimple
 import kotlin.math.abs
 import kotlin.ranges.coerceIn
@@ -10,23 +11,25 @@ import kotlin.ranges.coerceIn
 @TeleOp(name = "Pushbot TeleOp", group = "Pushbot")
 class PushbotTeleOp : LinearOpMode() {
 
-    private lateinit var fl: DcMotor
-    private lateinit var fr: DcMotor
-    private lateinit var bl: DcMotor
-    private lateinit var br: DcMotor
+    private lateinit var fl: DcMotorEx
+    private lateinit var fr: DcMotorEx
+    private lateinit var bl: DcMotorEx
+    private lateinit var br: DcMotorEx
 
     override fun runOpMode() {
         // --- Hardware (names must match Robot Config) ---
-        fl = hardwareMap.get(DcMotor::class.java, "frontleft")
-        fr = hardwareMap.get(DcMotor::class.java, "frontright")
-        bl = hardwareMap.get(DcMotor::class.java, "backleft")
-        br = hardwareMap.get(DcMotor::class.java, "backright")
+        fl = hardwareMap.get(DcMotorEx::class.java, "frontleft")
+        fr = hardwareMap.get(DcMotorEx::class.java, "frontright")
+        bl = hardwareMap.get(DcMotorEx::class.java, "backleft")
+        br = hardwareMap.get(DcMotorEx::class.java, "backright")
 
         // Motor directions - VERIFY WITH SPIN TEST
+        // Standard: FL/FR forward, BL/BR reverse for mecanum
+        // If back motors are reversed, swap BL/BR directions below
         fl.direction = DcMotorSimple.Direction.FORWARD
         fr.direction = DcMotorSimple.Direction.REVERSE
-        bl.direction = DcMotorSimple.Direction.FORWARD
-        br.direction = DcMotorSimple.Direction.REVERSE
+        bl.direction = DcMotorSimple.Direction.REVERSE   // Try REVERSE for back motors
+        br.direction = DcMotorSimple.Direction.FORWARD  // Try FORWARD for back motors
 
         // Encoder mode (velocity PID)
         listOf(fl, fr, bl, br).forEach {
@@ -36,13 +39,14 @@ class PushbotTeleOp : LinearOpMode() {
 
         telemetry.addLine("Pushbot TeleOp Ready")
         telemetry.addLine("Left stick: drive/strafe | Right stick X: turn")
+        telemetry.addLine("If robot rotates instead of strafe, swap BL/BR directions")
         telemetry.update()
 
         waitForStart()
 
         while (opModeIsActive()) {
             // --- Gamepad input ---
-            val forward = -gamepad1.left_stick_y.toDouble()
+            val forward = gamepad1.left_stick_y.toDouble()  // forward = positive
             val strafe  = gamepad1.left_stick_x.toDouble()
             val turn    = gamepad1.right_stick_x.toDouble()
 
