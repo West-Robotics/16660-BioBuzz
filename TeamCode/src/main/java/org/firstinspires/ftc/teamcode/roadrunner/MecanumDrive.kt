@@ -59,11 +59,14 @@ import org.firstinspires.ftc.teamcode.roadrunner.messages.MecanumCommandMessage
 import org.firstinspires.ftc.teamcode.roadrunner.messages.MecanumLocalizerInputsMessage
 import org.firstinspires.ftc.teamcode.roadrunner.messages.PoseMessage
 import java.util.LinkedList
-import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
+import kotlin.math.hypot
+import kotlin.math.abs
+
+
 
 /**
  * Road Runner 1.0 mecanum drive, ported to Kotlin from the official quickstart
@@ -156,7 +159,86 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
      */
     var visionCorrectionEnabled = false
 
+    // ===== ANTI-RAMMING / PUSH DETECTION =====
+    /** Last commanded velocity (set by setDrivePowers). */
+    var lastCommandedVelocity: PoseVelocity2d? = null
+    /** Whether an external push is currently detected. */
+    var isBeingPushed: Boolean = false
+    /** Nanoseconds when push was first detected (for debounce). */
+    var pushDetectedNanos: Long = 0
+    /** Nanoseconds when push ended (for release delay). */
+    var pushReleasedNanos: Long = 0
+    /** True if anchor mode was manually engaged via gamepad combo. */
+    var anchorManualEngage: Boolean = false
+
+    /**
+     * Returns the velocity error (measured - commanded) for push detection.
+     * Call after updatePoseEstimate() to get fresh measured velocity.
+     */
+    fun getVelocityError(): PoseVelocity2d? {
+        val measured = lastMeasuredVelocity
+        val commanded = lastCommandedVelocity
+        if (measured == null || commanded == null) return null
+        return PoseVelocity2d(
+            Vector2d(
+                measured.component1().x - commanded.component1().x,
+                measured.component1().y - commanded.component1().y,
+            ),
+            measured.component2() - commanded.component2(),
+        )
+    }
+
+    /** Most recent measured velocity from the localizer (updated in updatePoseEstimate). */
+    var lastMeasuredVelocity: PoseVelocity2d? = null
+
+    /**
+     * Updates push detection state. Call this each cycle after updatePoseEstimate().
+     */
+    fun updatePushState() {
+        if (!org.firstinspires.ftc.teamcode.PUSH_DETECTION_ENABLED) {
+            isBeingPushed = false
+            anchorManualEngage = false
+            return
+        }
+
+        val error = getVelocityError()
+        val now = System.nanoTime()
+        var pushNow = false
+
+        if (error != null) {
+            val linearErr = hypot(error.component1().x, error.component1().y)
+            val headingErrDeg = abs(Math.toDegrees(error.component2()))
+            if (linearErr > org.firstinspires.ftc.teamcode.PUSH_VELOCITY_THRESHOLD || headingErrDeg > org.firstinspires.ftc.teamcode.PUSH_HEADING_THRESHOLD_DEG) {
+                pushNow = true
+            }
+        }
+
+        if (pushNow) {
+            if (pushDetectedNanos == 0L) pushDetectedNanos = now
+            val debounced = (now - pushDetectedNanos) / 1e6 >= org.firstinspires.ftc.teamcode.PUSH_DEBOUNCE_MS
+            isBeingPushed = debounced || anchorManualEngage
+            pushReleasedNanos = 0L
+        } else {
+            pushDetectedNanos = 0L
+            if (isBeingPushed && !anchorManualEngage) {
+                if (pushReleasedNanos == 0L) pushReleasedNanos = now
+                val released = (now - pushReleasedNanos) / 1e6 >= org.firstinspires.ftc.teamcode.PUSH_RELEASE_MS
+                if (released) isBeingPushed = false
+            } else if (!anchorManualEngage) {
+                isBeingPushed = false
+                pushReleasedNanos = 0L
+            }
+        }
+    }
+
+    /** Manually engage/disengage anchor mode (e.g., via gamepad combo). */
+    fun setAnchorManual(engage: Boolean) {
+        anchorManualEngage = engage
+        if (engage) isBeingPushed = true
+    }
+
     private val poseHistory = LinkedList<Pose2d>()
+
 
     private val estimatedPoseWriter = DownsampledWriter("ESTIMATED_POSE", 50_000_000)
     private val targetPoseWriter = DownsampledWriter("TARGET_POSE", 50_000_000)
@@ -505,10 +587,13 @@ class MecanumDrive(hardwareMap: HardwareMap, initialPose: Pose2d) {
 
         estimatedPoseWriter.write(PoseMessage(localizer.getPose()))
 
+        lastMeasuredVelocity = vel
+        updatePushState()
         return vel
     }
 
     fun setDrivePowers(powers: PoseVelocity2d) {
+        lastCommandedVelocity = powers
         val wheelVels = MecanumKinematics(1.0).inverse(
             PoseVelocity2dDual.constant<Time>(powers, 1),
         )

@@ -163,9 +163,7 @@ const val PICKUP_BUMP_MIN_MS = 60.0         // bump must last at least this to c
 const val PICKUP_BUMP_MAX_MS = 450.0        // longer than this is a jam/obstruction, not a pickup
 
 // -- Dodge anti-oscillation --
-const val DODGE_LATCH_MS = 600.0            // dodge direction latched for this long once chosen
 const val BLOCKED_GIVEUP_MS = 1500.0        // drop the committed target if blocked this long
-const val DODGE_LOOKAHEAD_SEC = 1.0         // predict remembered opponents this far ahead (uses their velocity)
 
 // -- Neural detector hygiene (PRIMARY-mode ghost guard + model versioning) --
 const val NN_MODEL_VERSION = "v0-untrained"  // bump whenever ball_detector.tflite is retrained — logged every match
@@ -179,6 +177,42 @@ const val TELEOP_INPUT_DEADZONE = 0.08       // sticks inside this count as "rel
 const val TELEOP_HOLD_POSITION_KP = 0.06      // hold correction power per INCH of drift (RR pose is inches)
 const val TELEOP_HOLD_HEADING_KP = 0.02      // hold turn power per degree of heading drift
 const val TELEOP_HOLD_MAX_POWER = 0.25       // cap on any single hold correction
+
+// ================== ANTI-RAMMING / PUSH-RESISTANCE ==================
+// Push detection: when measured velocity diverges from commanded, an
+// external force is shoving the robot. Engage maximum hold even during
+// driver input (anchor mode).
+const val PUSH_DETECTION_ENABLED = true
+const val PUSH_VELOCITY_THRESHOLD = 0.35       // inches/sec divergence per axis to flag a push
+const val PUSH_HEADING_THRESHOLD_DEG = 8.0     // heading rate divergence (deg/s) to flag a push
+const val PUSH_DEBOUNCE_MS = 150.0             // must persist this long before engaging
+const val PUSH_RELEASE_MS = 800.0              // hold anchor this long after push stops
+const val ANCHOR_MAX_POWER = 0.85              // max corrective power during anchor (0.85 of 1.0)
+const val ANCHOR_KP_POS = 0.15                 // position gain during anchor (per inch)
+const val ANCHOR_KP_HEADING = 0.08             // heading gain during anchor (per deg)
+const val ANCHOR_ENGAGE_GAMEPAD = true         // also allow manual engage via RIGHT_BUMPER+LB combo
+
+// Vision fusion tightening on push: when pushed, trust vision corrections more
+const val PUSH_FUSION_MAX_GAIN = 0.35          // override FUSION_MAX_GAIN during push
+const val PUSH_FUSION_MAX_STEP_IN = 6.0        // override FUSION_MAX_STEP_IN during push
+const val PUSH_FUSION_MAX_STEP_DEG = 4.0       // override FUSION_MAX_STEP_DEG during push
+
+// Dodge: active opponent avoidance during teleop + autonomy
+const val DODGE_ENABLED = true
+const val DODGE_LOOKAHEAD_SEC = 1.2            // how far ahead to predict opponent path
+const val DODGE_TRIGGER_DIST_CM = 120.0        // start dodging when opponent within this
+const val DODGE_MIN_DIST_CM = 60.0             // emergency brake if opponent this close
+const val DODGE_STRAFE_POWER = 0.45            // lateral dodge power
+const val DODGE_TURN_POWER = 0.30              // turn-away power
+const val DODGE_LATCH_MS = 800.0               // commit to dodge direction this long
+const val DODGE_COOLDOWN_MS = 2000.0           // minimum time between dodges
+
+// Autonomy stuck recovery: if position error accumulates, replan
+const val AUTONOMY_STUCK_ENABLED = true
+const val AUTONOMY_STUCK_POS_ERR_IN = 8.0      // position error (inches) to flag stuck
+const val AUTONOMY_STUCK_HEADING_ERR_DEG = 15.0 // heading error (deg) to flag stuck
+const val AUTONOMY_STUCK_DWELL_MS = 2500.0     // must persist this long before replan
+const val AUTONOMY_STUCK_MAX_REPLANS = 2       // max replans per phase
 
 // ================== 3-WHEEL DEAD-WHEEL ODOMETRY (add the pods: ~zero-slip localization) ==================
 // The Road Runner localizer uses these automatically WHEN all three motors exist

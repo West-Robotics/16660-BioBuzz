@@ -70,6 +70,10 @@ class HybridPoseEstimator(
 
     private var fusedMotion: RobotMotionDelta? = null
 
+    // ===== PUSH-RESISTANT FUSION =====
+    /** True when the robot is being pushed (external force detected). */
+    var isBeingPushed: Boolean = false
+
     /** Seeds the visual pose at the Road Runner pose (start of autonomous). */
     fun seed(rrPose: Pose2d) {
         visualPose = rrPose
@@ -292,15 +296,29 @@ class HybridPoseEstimator(
         }
 
         // Confidence-scaled weight, capped so vision can never dominate RR.
-        val weight = min(VisionTuning.FUSION_MAX_GAIN, overallConfidence * VisionTuning.FUSION_MAX_GAIN)
+        // When pushed, trust vision corrections more (higher gain, larger steps).
+        val maxGain: Double
+        val maxStepIn: Double
+        val maxStepDeg: Double
+        if (isBeingPushed) {
+            maxGain = org.firstinspires.ftc.teamcode.PUSH_FUSION_MAX_GAIN
+            maxStepIn = org.firstinspires.ftc.teamcode.PUSH_FUSION_MAX_STEP_IN
+            maxStepDeg = org.firstinspires.ftc.teamcode.PUSH_FUSION_MAX_STEP_DEG
+        } else {
+            maxGain = VisionTuning.FUSION_MAX_GAIN
+            maxStepIn = VisionTuning.FUSION_MAX_STEP_IN
+            maxStepDeg = VisionTuning.FUSION_MAX_STEP_DEG
+        }
+
+        val weight = min(maxGain, overallConfidence * maxGain)
 
         val cappedLine = Vector2d(
-            (weight * err.line.x).coerceIn(-VisionTuning.FUSION_MAX_STEP_IN, VisionTuning.FUSION_MAX_STEP_IN),
-            (weight * err.line.y).coerceIn(-VisionTuning.FUSION_MAX_STEP_IN, VisionTuning.FUSION_MAX_STEP_IN),
+            (weight * err.line.x).coerceIn(-maxStepIn, maxStepIn),
+            (weight * err.line.y).coerceIn(-maxStepIn, maxStepIn),
         )
         val cappedAngle = (weight * err.angle).coerceIn(
-            -Math.toRadians(VisionTuning.FUSION_MAX_STEP_DEG),
-            Math.toRadians(VisionTuning.FUSION_MAX_STEP_DEG),
+            -Math.toRadians(maxStepDeg),
+            Math.toRadians(maxStepDeg),
         )
 
         return rrPose.plus(Twist2d(cappedLine, cappedAngle))
@@ -363,6 +381,11 @@ class VisionSubsystem(
 
     /** The two cameras are two observation sources for ONE pose estimate. */
     val fusion = HybridPoseEstimator(upProcessor, frontProcessor)
+
+    /** Updates the push state on the fusion estimator for push-resistant corrections. */
+    fun setPushState(pushed: Boolean) {
+        fusion.isBeingPushed = pushed
+    }
 
     // ---- SINGLE-CAMERA SUPPORT ----
     // One camera works: mount it in the FRONT position (as high as practical,

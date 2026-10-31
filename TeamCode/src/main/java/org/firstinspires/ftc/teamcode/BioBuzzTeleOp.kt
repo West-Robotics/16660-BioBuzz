@@ -11,6 +11,21 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
+import org.firstinspires.ftc.teamcode.ANCHOR_ENGAGE_GAMEPAD
+import org.firstinspires.ftc.teamcode.ANCHOR_KP_POS
+import org.firstinspires.ftc.teamcode.ANCHOR_KP_HEADING
+import org.firstinspires.ftc.teamcode.ANCHOR_MAX_POWER
+import org.firstinspires.ftc.teamcode.DODGE_ENABLED
+import org.firstinspires.ftc.teamcode.DODGE_LOOKAHEAD_SEC
+import org.firstinspires.ftc.teamcode.DODGE_MIN_DIST_CM
+import org.firstinspires.ftc.teamcode.DODGE_STRAFE_POWER
+import org.firstinspires.ftc.teamcode.DODGE_TURN_POWER
+import org.firstinspires.ftc.teamcode.DODGE_TRIGGER_DIST_CM
+import kotlin.math.atan2
+import kotlin.math.hypot
+import kotlin.math.max
+
+
 /**
  * ============ BIOBUZZ TELEOP with vision assists ============
  *
@@ -272,6 +287,64 @@ class BioBuzzTeleOp : LinearOpMode() {
                 forward = 0.0
                 strafe = 0.0
                 turn = 0.0
+            }
+
+            // ===== ANTI-RAMMING / PUSH-RESISTANCE =====
+            // If the robot is being shoved (detected via velocity divergence),
+            // engage ANCHOR MODE: maximum hold correction even during driver input.
+            // Also allow manual engage via RIGHT_BUMPER + LEFT_BUMPER combo.
+            val pushed = locator?.isBeingPushed == true
+            val manualAnchor = ANCHOR_ENGAGE_GAMEPAD && gamepad1.right_bumper && gamepad1.left_bumper
+            if (pushed || manualAnchor) {
+                locator?.setAnchorManual(manualAnchor)
+                if (locator != null) {
+                    // Hold the pose at the moment push was detected (or now if manual)
+                    if (stillPose == null) stillPose = locator.pose
+                    val err = stillPose!!.minus(locator.pose)
+                    val hf = (ANCHOR_KP_POS * err.line.x)
+                        .coerceIn(-ANCHOR_MAX_POWER, ANCHOR_MAX_POWER)
+                    val hs = (ANCHOR_KP_POS * err.line.y)
+                        .coerceIn(-ANCHOR_MAX_POWER, ANCHOR_MAX_POWER)
+                    val ht = (ANCHOR_KP_HEADING * Math.toDegrees(err.angle))
+                        .coerceIn(-ANCHOR_MAX_POWER, ANCHOR_MAX_POWER)
+                    forward = (forward + hf).coerceIn(-1.0, 1.0)
+                    strafe = (strafe + hs).coerceIn(-1.0, 1.0)
+                    turn = (turn + ht).coerceIn(-1.0, 1.0)
+                }
+                if (manualAnchor) locator?.setAnchorManual(true)
+            } else {
+                locator?.setAnchorManual(false)
+            }
+
+            // ===== ACTIVE DODGE (opponent avoidance) =====
+            // Use WorldModel opponent tracks + vision to dodge incoming robots.
+            if (DODGE_ENABLED && !tipping && !pushed && shadowWorld != null) {
+                val opponents = shadowWorld.opponents()
+                val now = System.nanoTime()
+                for (opp in opponents) {
+                    val distCm = hypot(opp.fieldXcm, opp.fieldYcm)
+                    val bearingDeg = Math.toDegrees(atan2(opp.fieldYcm, opp.fieldXcm))
+                    // Emergency brake if opponent is RIGHT ON US
+                    if (distCm < DODGE_MIN_DIST_CM) {
+                        forward = 0.0
+                        strafe = 0.0
+                        turn = 0.0
+                        break
+                    }
+                    // Dodge if opponent is close and approaching
+                    if (distCm < DODGE_TRIGGER_DIST_CM) {
+                        // Check if opponent is moving toward us (negative radial velocity)
+                        val radialVel = (opp.fieldXcm * opp.velXcmPerSec + opp.fieldYcm * opp.velYcmPerSec) / max(distCm, 1.0)
+                        val timeToImpact = if (radialVel < -10.0) distCm / abs(radialVel) else Double.POSITIVE_INFINITY
+                        if (timeToImpact < DODGE_LOOKAHEAD_SEC) {
+                            // Dodge perpendicular to bearing (strafe away + turn away)
+                            val dodgeDir = if (bearingDeg > 0) -1.0 else 1.0  // strafe opposite to bearing
+                            strafe = (strafe + dodgeDir * DODGE_STRAFE_POWER).coerceIn(-1.0, 1.0)
+                            turn = (turn + dodgeDir * DODGE_TURN_POWER).coerceIn(-1.0, 1.0)
+                            break
+                        }
+                    }
+                }
             }
 
             // ---- drive (always works — that's the point of the fallback) ----
