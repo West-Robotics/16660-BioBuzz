@@ -28,9 +28,9 @@ class PushbotTeleOp : LinearOpMode() {
         bl.direction = DcMotorSimple.Direction.FORWARD
         br.direction = DcMotorSimple.Direction.REVERSE
 
-        // Raw power mode (no encoders)
+        // Encoder mode (velocity PID)
         listOf(fl, fr, bl, br).forEach {
-            it.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
+            it.mode = DcMotor.RunMode.RUN_USING_ENCODER
             it.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
         }
 
