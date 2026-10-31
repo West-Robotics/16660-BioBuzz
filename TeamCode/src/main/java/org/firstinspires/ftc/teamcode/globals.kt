@@ -214,6 +214,18 @@ const val AUTONOMY_STUCK_HEADING_ERR_DEG = 15.0 // heading error (deg) to flag s
 const val AUTONOMY_STUCK_DWELL_MS = 2500.0     // must persist this long before replan
 const val AUTONOMY_STUCK_MAX_REPLANS = 2       // max replans per phase
 
+// ================== PIN / CORNER ESCAPE ==================
+// Pin detection: when commanded velocity is high but measured velocity
+// is near zero (opponent pinning us). Triggers escape sequence.
+const val PIN_DETECTION_ENABLED = true
+const val PIN_VEL_RATIO_THRESHOLD = 0.15      // measured / commanded < this = stuck
+const val PIN_DWELL_MS = 1000.0               // must persist this long
+const val ESCAPE_BACKUP_POWER = 0.65          // reverse power to create gap
+const val ESCAPE_BACKUP_DIST_IN = 12.0        // how far to back up (inches)
+const val ESCAPE_ROTATE_DEG = 90.0            // then rotate this much
+const val ESCAPE_RETRY_MAX = 3                // max escape attempts before give up
+const val ESCAPE_COOLDOWN_MS = 3000.0         // minimum time between escapes
+
 // ================== 3-WHEEL DEAD-WHEEL ODOMETRY (add the pods: ~zero-slip localization) ==================
 // The Road Runner localizer uses these automatically WHEN all three motors exist
 // in the hardware configuration; otherwise it falls back to the (slip-prone)

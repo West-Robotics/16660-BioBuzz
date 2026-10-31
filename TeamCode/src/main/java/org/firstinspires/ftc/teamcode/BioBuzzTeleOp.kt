@@ -11,6 +11,16 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
+import org.firstinspires.ftc.teamcode.ESCAPE_BACKUP_DIST_IN
+import org.firstinspires.ftc.teamcode.ESCAPE_BACKUP_POWER
+import org.firstinspires.ftc.teamcode.ESCAPE_COOLDOWN_MS
+import org.firstinspires.ftc.teamcode.ESCAPE_RETRY_MAX
+import org.firstinspires.ftc.teamcode.ESCAPE_ROTATE_DEG
+import org.firstinspires.ftc.teamcode.PIN_DETECTION_ENABLED
+import org.firstinspires.ftc.teamcode.PIN_DWELL_MS
+import org.firstinspires.ftc.teamcode.PIN_VEL_RATIO_THRESHOLD
+
+
 import org.firstinspires.ftc.teamcode.ANCHOR_ENGAGE_GAMEPAD
 import org.firstinspires.ftc.teamcode.ANCHOR_KP_POS
 import org.firstinspires.ftc.teamcode.ANCHOR_KP_HEADING
@@ -56,6 +66,14 @@ class BioBuzzTeleOp : LinearOpMode() {
     // loader fire cycle (advances one tick at a time in the main loop)
     private enum class LoadState { IDLE, STROKING, WATCHING, RETRACTING }
     private var loadState = LoadState.IDLE
+
+    // ===== PIN / CORNER ESCAPE STATE =====
+    private enum class EscapePhase { NONE, BACKUP, ROTATE, RETRY }
+    private var escapePhase = EscapePhase.NONE
+    private var escapeAttempts = 0
+    private var escapeStartPose: Pose2d? = null
+    private var pinTimerNanos: Long = 0
+    private var lastEscapeNanos: Long = 0
 
     override fun runOpMode() {
         // ---- BOOT HARDWARE PROBE: degrade gracefully if anything's missing ----
@@ -344,6 +362,91 @@ class BioBuzzTeleOp : LinearOpMode() {
                             break
                         }
                     }
+                }
+            }
+
+            // ===== PIN / CORNER ESCAPE =====
+            // Detect when we're pinned (high commanded vel, near-zero measured vel,
+            // opponent nearby). Execute: BACKUP -> ROTATE -> RETRY FORWARD.
+            if (PIN_DETECTION_ENABLED && locator != null && !tipping) {
+                val commandedSpeed = hypot(forward, strafe)
+                val measuredVel = locator.lastMeasuredVelocity
+                val measuredSpeed = if (measuredVel != null) hypot(measuredVel.component1().x, measuredVel.component1().y) else 0.0
+                val velRatio = if (commandedSpeed > 0.2) measuredSpeed / commandedSpeed else 1.0
+
+                // Opponent nearby check
+                var opponentNear = false
+                if (shadowWorld != null) {
+                    for (opp in shadowWorld.opponents()) {
+                        val distCm = hypot(opp.fieldXcm, opp.fieldYcm)
+                        if (distCm < 80.0) { opponentNear = true; break }
+                    }
+                }
+
+                val pinned = commandedSpeed > 0.2 && velRatio < PIN_VEL_RATIO_THRESHOLD && opponentNear
+                val now = System.nanoTime()
+
+                if (pinned) {
+                    if (pinTimerNanos == 0L) pinTimerNanos = now
+                    val pinMs = (now - pinTimerNanos) / 1e6
+                    if (pinMs > PIN_DWELL_MS && escapeAttempts < ESCAPE_RETRY_MAX &&
+                        (now - lastEscapeNanos) / 1e6 > ESCAPE_COOLDOWN_MS) {
+
+                        // Start escape sequence
+                        if (escapePhase == EscapePhase.NONE) {
+                            escapePhase = EscapePhase.BACKUP
+                            escapeStartPose = locator.pose
+                            lastEscapeNanos = now
+                            telemetry.addLine("!! PIN DETECTED — ESCAPE SEQUENCE STARTED !!")
+                        }
+                    }
+                } else {
+                    pinTimerNanos = 0L
+                    if (escapePhase != EscapePhase.NONE) {
+                        // Reset if we're free
+                        escapePhase = EscapePhase.NONE
+                        escapeStartPose = null
+                    }
+                }
+
+                // Execute escape sequence
+                when (escapePhase) {
+                    EscapePhase.BACKUP -> {
+                        if (escapeStartPose != null) {
+                            val backedUp = escapeStartPose!!.position.minus(locator.pose.position).norm()
+                            if (backedUp >= ESCAPE_BACKUP_DIST_IN) {
+                                escapePhase = EscapePhase.ROTATE
+                                escapeStartPose = locator.pose
+                            } else {
+                                forward = -ESCAPE_BACKUP_POWER
+                                strafe = 0.0
+                                turn = 0.0
+                            }
+                        } else {
+                            escapePhase = EscapePhase.NONE
+                        }
+                    }
+                    EscapePhase.ROTATE -> {
+                        if (escapeStartPose != null) {
+                            val rotated = abs(locator.pose.heading.toDouble() - escapeStartPose!!.heading.toDouble())
+                            if (rotated >= Math.toRadians(ESCAPE_ROTATE_DEG)) {
+                                escapePhase = EscapePhase.RETRY
+                                escapeStartPose = null
+                            } else {
+                                forward = 0.0
+                                strafe = 0.0
+                                turn = if (Math.random() > 0.5) 0.5 else -0.5  // random direction
+                            }
+                        } else {
+                            escapePhase = EscapePhase.NONE
+                        }
+                    }
+                    EscapePhase.RETRY -> {
+                        escapePhase = EscapePhase.NONE
+                        escapeAttempts++
+                        telemetry.addLine("Escape attempt $escapeAttempts complete, retrying forward")
+                    }
+                    EscapePhase.NONE -> {}
                 }
             }
 
