@@ -9,8 +9,7 @@ import org.opencv.core.MatOfByte
 import org.opencv.imgcodecs.Imgcodecs
 import org.opencv.imgproc.Imgproc
 import java.io.File
-import java.util.concurrent.Executors
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -109,6 +108,10 @@ object BlackBox {
             root.mkdirs()
             val file = File(root, "${label}_${System.currentTimeMillis()}.db")
             val database = SQLiteDatabase.openOrCreateDatabase(file, null)
+            // Hand the handle to closeDatabase() immediately so every failure
+            // after this point (schema, session insert, writer creation)
+            // closes it instead of leaking it.
+            db = database
             // WAL keeps the writes cheap: the frame BLOBs are appended
             // instead of forcing a disk sync per row.
             database.enableWriteAheadLogging()
@@ -120,7 +123,6 @@ object BlackBox {
                 createdAtMs = System.currentTimeMillis(),
                 startedNanos = System.nanoTime(),
             )
-            db = database
             store = sessionStore
             sessionRef = ref
             sessionFile = file
@@ -130,7 +132,8 @@ object BlackBox {
             droppedRows = 0
             pendingFrames.set(0)
             writer = ThreadPoolExecutor(
-                1, 1, 0L, TimeUnit.MILLISECONDS, LinkedBlockingQueue(),
+                1, 1, 0L, TimeUnit.MILLISECONDS,
+                ArrayBlockingQueue<Runnable>(MAX_PENDING_ROWS),
             ) { r -> Thread(r, "blackbox-writer").apply { isDaemon = true } }
             active = true
             event("session_start", "label" to label, "version" to SessionSchema.VERSION)
@@ -153,12 +156,16 @@ object BlackBox {
         val st = store
         val w = writer
         if (!active || ref < 0 || st == null || w == null) return
-        submit(w) {
+        if (!submit(w) {
             try {
                 st.addState(ref, s)
             } catch (_: Exception) {
                 droppedRows++
             }
+        }) {
+            // The bounded writer queue is full: drop the row rather than
+            // blocking the control loop or letting the backlog grow.
+            droppedRows++
         }
     }
 
@@ -170,12 +177,14 @@ object BlackBox {
         val w = writer
         if (!active || ref < 0 || st == null || w == null || tracks.isEmpty()) return
         val tNanos = System.nanoTime()
-        submit(w) {
+        if (!submit(w) {
             try {
                 st.addTracks(ref, tNanos, tracks)
             } catch (_: Exception) {
                 droppedRows++
             }
+        }) {
+            droppedRows++
         }
     }
 
@@ -188,12 +197,14 @@ object BlackBox {
         val st = store
         val w = writer
         if (!active || ref < 0 || st == null || w == null) return
-        submit(w) {
+        if (!submit(w) {
             try {
                 st.addDecision(ref, d)
             } catch (_: Exception) {
                 droppedRows++
             }
+        }) {
+            droppedRows++
         }
     }
 
@@ -210,12 +221,14 @@ object BlackBox {
         if (!active || ref < 0 || st == null || w == null) return
         val seq = eventSeq++
         val e = SessionEvent(System.nanoTime(), System.currentTimeMillis(), type, fields.toList())
-        submit(w) {
+        if (!submit(w) {
             try {
                 st.addEvent(ref, seq, e)
             } catch (_: Exception) {
                 droppedRows++
             }
+        }) {
+            droppedRows++
         }
     }
 
@@ -241,16 +254,25 @@ object BlackBox {
             return
         }
         pendingFrames.incrementAndGet()
-        frameBytesSaved += jpeg.size
         val f = SessionFrame(camera, captureNanos, jpeg, widthPx, heightPx, System.currentTimeMillis())
-        submit(w) {
+        val accepted = submit(w) {
             try {
                 st.addFrame(ref, f)
+                // Count bytes only once the frame is durably inserted: a
+                // rejected or failed insertion must not inflate the session
+                // budget or leave a dangling pending-frame count.
+                frameBytesSaved += jpeg.size
             } catch (_: Exception) {
                 droppedRows++
             } finally {
                 pendingFrames.decrementAndGet()
             }
+        }
+        if (!accepted) {
+            // The queue was full and the task was never queued: undo the
+            // pending count so it cannot leak, and count the drop.
+            pendingFrames.decrementAndGet()
+            framesDropped++
         }
     }
 
@@ -265,9 +287,23 @@ object BlackBox {
         writer = null
         if (w != null) {
             w.shutdown()
+            var terminated = false
             try {
-                w.awaitTermination(5, TimeUnit.SECONDS)
-            } catch (_: InterruptedException) {
+                terminated = w.awaitTermination(5, TimeUnit.SECONDS)
+            } catch (e: InterruptedException) {
+                // Preserve the interruption status so callers can still see it.
+                Thread.currentThread().interrupt()
+            }
+            if (!terminated) {
+                // Timed out (or interrupted): cancel queued tasks and
+                // interrupt any running task so nothing can touch the DB once
+                // we close it, then drain.
+                w.shutdownNow()
+                try {
+                    w.awaitTermination(5, TimeUnit.SECONDS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
             }
         }
         val st = store
@@ -302,19 +338,25 @@ object BlackBox {
     }
 
     /**
-     * Hands a row to the writer thread. A rejected task means the queue is
-     * full — the row is dropped rather than blocking the caller.
+     * Hands a row to the writer thread. Returns false when the bounded queue
+     * is full and the task was rejected (the caller counts the drop). A
+     * rejected task never runs, so nothing it would have mutated is touched.
      */
-    private fun submit(w: ThreadPoolExecutor, task: () -> Unit) {
+    private fun submit(w: ThreadPoolExecutor, task: () -> Unit): Boolean =
         try {
             w.execute(task)
+            true
         } catch (_: Exception) {
-            droppedRows++
+            false
         }
-    }
 
     /** How many frames may be waiting for the writer at once. */
     private const val MAX_PENDING_FRAMES = 8
+
+    /** Bound on the writer's queue so state/event/decision backlog cannot
+     * grow without limit; under sustained failure we drop instead of
+     * buffering forever. */
+    private const val MAX_PENDING_ROWS = 256
 }
 
 
@@ -398,16 +440,6 @@ class FrameGrabProcessor(private val camera: String) : VisionProcessor {
  * branch adds the logging as an extension so every call site is unchanged.
  */
 fun WorldModel.logToBlackBox() {
-    val hivePos = hive()
-    BlackBox.state(
-        SessionState(
-            tNanos = System.nanoTime(),
-            tMs = System.currentTimeMillis(),
-            hiveXcm = hivePos?.first,
-            hiveYcm = hivePos?.second,
-            hiveConfidence = hiveConfidence(),
-        ),
-    )
     BlackBox.tracks(
         balls().map {
             SessionTrack(

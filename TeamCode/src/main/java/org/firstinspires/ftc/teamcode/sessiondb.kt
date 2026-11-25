@@ -451,7 +451,14 @@ class SessionStore(private val sql: Sql) {
             listOf(sessionRef),
         )
         if (events.isEmpty()) return emptyList()
-        val fields = sql.query("SELECT * FROM event_field")
+        // Only the fields of events that belong to THIS session: a join on
+        // event keeps another session's event_field rows from leaking in.
+        val fields = sql.query(
+            "SELECT ef.* FROM event_field ef " +
+            "JOIN event e ON ef.event_ref = e.id " +
+            "WHERE e.$SESSION_REF = ?",
+            listOf(sessionRef),
+        )
         val byEvent = fields.groupBy { (it["event_ref"] as Number).toLong() }
         return events.map { ev ->
             val id = (ev["id"] as Number).toLong()

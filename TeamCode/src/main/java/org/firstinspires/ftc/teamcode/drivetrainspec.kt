@@ -73,6 +73,10 @@ object DrivetrainSpec {
     /** Centimeters of travel per encoder tick (one full tick of wheel rotation). */
     val driveCmPerTick: Double = PI * DRIVE_WHEEL_DIAMETER_CM / driveTicksPerWheelRev
 
+    /** Free speed of the drive wheels at full motor power, in inches/sec. */
+    val driveFreeSpeedInPerSec: Double =
+        DRIVE_MOTOR_MAX_RPM * PI * DRIVE_WHEEL_DIAMETER_CM / 60.0 / 2.54
+
     /** Road Runner's inPerTick: encoder ticks -> inches of travel. */
     val rrInPerTick: Double = driveCmPerTick / 2.54
 

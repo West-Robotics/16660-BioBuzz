@@ -57,22 +57,22 @@ private fun nextYellowJacket(
 class Drivetrain : Mechanism {
 
     val FrontLeft = nextYellowJacket(DrivetrainFrontLeft, DRIVE_MOTOR_MAX_RPM, DRIVE_MOTOR_ENCODER_CPR) {
-        direction = NextMotor.Direction.FORWARD // use FORWARD or REVERSE
+        direction = if (DriveConfig.FL_REVERSED) NextMotor.Direction.REVERSE else NextMotor.Direction.FORWARD
         zeroPowerBehavior = NextMotor.ZeroPowerBehavior.BRAKE // use BRAKE or FLOAT
     }
 
     val FrontRight = nextYellowJacket(DrivetrainFrontRight, DRIVE_MOTOR_MAX_RPM, DRIVE_MOTOR_ENCODER_CPR) {
-        direction = NextMotor.Direction.FORWARD
+        direction = if (DriveConfig.FR_REVERSED) NextMotor.Direction.REVERSE else NextMotor.Direction.FORWARD
         zeroPowerBehavior = NextMotor.ZeroPowerBehavior.BRAKE // use BRAKE or FLOAT
     }
 
     val BackLeft = nextYellowJacket(DrivetrainBackLeft, DRIVE_MOTOR_MAX_RPM, DRIVE_MOTOR_ENCODER_CPR) {
-        direction = NextMotor.Direction.FORWARD
+        direction = if (DriveConfig.BL_REVERSED) NextMotor.Direction.REVERSE else NextMotor.Direction.FORWARD
         zeroPowerBehavior = NextMotor.ZeroPowerBehavior.BRAKE // use BRAKE or FLOAT
     }
 
     val BackRight = nextYellowJacket(DrivetrainBackRight, DRIVE_MOTOR_MAX_RPM, DRIVE_MOTOR_ENCODER_CPR) {
-        direction = NextMotor.Direction.FORWARD
+        direction = if (DriveConfig.BR_REVERSED) NextMotor.Direction.REVERSE else NextMotor.Direction.FORWARD
         zeroPowerBehavior = NextMotor.ZeroPowerBehavior.BRAKE // use BRAKE or FLOAT
     }
 
@@ -164,29 +164,14 @@ class Drivetrain : Mechanism {
     }
 
     fun driveTeleOp(forward: Double, strafe: Double, turn: Double) {
-        var frontLeft = forward + strafe + turn
-        var frontRight = forward - strafe - turn
-        var backLeft = forward - strafe + turn
-        var backRight = forward + strafe - turn
+        // Mixing lives in DriveConfig.mix so the NextFTC teleop path and the
+        // Road Runner path can never disagree about the wheel commands.
+        val wheels = DriveConfig.mix(forward, strafe, turn)
 
-        // Normalize so none exceeds 1.0
-        val max = maxOf(
-            1.0,
-            kotlin.math.abs(frontLeft),
-            kotlin.math.abs(frontRight),
-            kotlin.math.abs(backLeft),
-            kotlin.math.abs(backRight)
-        )
-
-        frontLeft /= max
-        frontRight /= max
-        backLeft /= max
-        backRight /= max
-
-        FrontLeft.setVelocitySetpoint((frontLeft * DRIVE_MOTOR_MAX_RPM).rpm)
-        FrontRight.setVelocitySetpoint((frontRight * DRIVE_MOTOR_MAX_RPM).rpm)
-        BackLeft.setVelocitySetpoint((backLeft * DRIVE_MOTOR_MAX_RPM).rpm)
-        BackRight.setVelocitySetpoint((backRight * DRIVE_MOTOR_MAX_RPM).rpm)
+        FrontLeft.setVelocitySetpoint((wheels[0] * DRIVE_MOTOR_MAX_RPM).rpm)
+        FrontRight.setVelocitySetpoint((wheels[1] * DRIVE_MOTOR_MAX_RPM).rpm)
+        BackLeft.setVelocitySetpoint((wheels[2] * DRIVE_MOTOR_MAX_RPM).rpm)
+        BackRight.setVelocitySetpoint((wheels[3] * DRIVE_MOTOR_MAX_RPM).rpm)
     }
 
 

@@ -662,6 +662,7 @@ class BioBuzzAutonomous : LinearOpMode() {
                 if (current == null) {
                     committedId = decision.targetId
                     intake.markPickupStart() // reset encoder baseline for new target
+                    closeSinceNanos = 0L // settle time cannot transfer between balls
                     challengerId = null; challengerWins = 0
                 } else if (decision.targetId != committedId) {
                     if (challengerId == decision.targetId) challengerWins++ else challengerWins = 1
@@ -673,6 +674,7 @@ class BioBuzzAutonomous : LinearOpMode() {
                         )
                         committedId = decision.targetId
                         intake.markPickupStart() // reset encoder baseline for new target
+                    closeSinceNanos = 0L // settle time cannot transfer between balls
                         challengerId = null; challengerWins = 0
                     }
                 } else {
@@ -891,7 +893,22 @@ class BioBuzzAutonomous : LinearOpMode() {
 
             if (distCm <= FLOWER_APPROACH_CM + 5.0) {
                 positioned = true
-                pulledFlowerId = remembered?.id
+                pulledFlowerId = remembered?.id ?: live?.let { target ->
+                    // Raw BallTarget sightings have no track id. Reproject the
+                    // live flower into field space and associate it with the
+                    // WorldModel track created by report() above.
+                    val bearing = Math.toRadians(target.bearingDeg)
+                    val forwardCm = target.distanceCm * kotlin.math.cos(bearing)
+                    val leftCm = -target.distanceCm * kotlin.math.sin(bearing)
+                    val fieldX = px + forwardCm * kotlin.math.cos(hdg) - leftCm * kotlin.math.sin(hdg)
+                    val fieldY = py + forwardCm * kotlin.math.sin(hdg) + leftCm * kotlin.math.cos(hdg)
+                    val nearest = world.flowers().minByOrNull {
+                        hypot(it.fieldXcm - fieldX, it.fieldYcm - fieldY)
+                    }
+                    nearest?.takeIf {
+                        hypot(it.fieldXcm - fieldX, it.fieldYcm - fieldY) <= WM_TRACK_MATCH_CM
+                    }?.id
+                }
                 break
             }
 
@@ -1126,6 +1143,7 @@ class BioBuzzAutonomous : LinearOpMode() {
                 flywheelLeftRpm = flywheel.measuredLeftRpm(),
                 flywheelRightRpm = flywheel.measuredRightRpm(),
                 batteryVolts = ShotPredictor.reportHardwareMapVolts(hardwareMap),
+                ballsHeld = ballsHeld,
             ),
         )
         world.logToBlackBox()

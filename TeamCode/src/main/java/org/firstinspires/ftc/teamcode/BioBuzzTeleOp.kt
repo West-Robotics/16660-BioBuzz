@@ -97,7 +97,8 @@ class BioBuzzTeleOp : LinearOpMode() {
             }
         var fieldCentric = TELEOP_FIELD_CENTRIC_DEFAULT
         var poseHold = TELEOP_POSE_HOLD_DEFAULT
-        var stillPose: Pose2d? = null
+        var stillPose: Pose2d? = null        // pose-hold capture (sticks released)
+        var anchorStillPose: Pose2d? = null  // anchor-mode capture (push detected)
         var lastLeftStickBtn = false
         var lastRightStickBtn = false
         val intake = Intake(hw.intakeMotor)
@@ -298,27 +299,21 @@ class BioBuzzTeleOp : LinearOpMode() {
                 }
             }
 
-            // ---- TILT GUARD: cut drive power, not just warn (the legality ----
-            // review describes this reflex as "cuts power") ----
-            val tipping = tiltGuard.isTipping()
-            if (tipping) {
-                forward = 0.0
-                strafe = 0.0
-                turn = 0.0
-            }
-
             // ===== ANTI-RAMMING / PUSH-RESISTANCE =====
-            // If the robot is being shoved (detected via velocity divergence),
-            // engage ANCHOR MODE: maximum hold correction even during driver input.
-            // Also allow manual engage via RIGHT_BUMPER + LEFT_BUMPER combo.
+            // updatePoseEstimate() compared the previous ACTUAL output with
+            // fresh measured motion. Do not evaluate a new stick command here:
+            // that would compare stale motion with new intent and cause false
+            // push detections.
             val pushed = locator?.isBeingPushed == true
             val manualAnchor = ANCHOR_ENGAGE_GAMEPAD && gamepad1.right_bumper && gamepad1.left_bumper
             if (pushed || manualAnchor) {
                 locator?.setAnchorManual(manualAnchor)
+                // Hold the pose at the moment push was detected (or now if manual).
+                // Separate capture from the pose-hold stillPose so the two modes
+                // never clobber each other's reference.
                 if (locator != null) {
-                    // Hold the pose at the moment push was detected (or now if manual)
-                    if (stillPose == null) stillPose = locator.pose
-                    val err = stillPose!!.minus(locator.pose)
+                    if (anchorStillPose == null) anchorStillPose = locator.pose
+                    val err = anchorStillPose!!.minus(locator.pose)
                     val hf = (ANCHOR_KP_POS * err.line.x)
                         .coerceIn(-ANCHOR_MAX_POWER, ANCHOR_MAX_POWER)
                     val hs = (ANCHOR_KP_POS * err.line.y)
@@ -332,9 +327,13 @@ class BioBuzzTeleOp : LinearOpMode() {
                 if (manualAnchor) locator?.setAnchorManual(true)
             } else {
                 locator?.setAnchorManual(false)
+                anchorStillPose = null
             }
 
             // ===== ACTIVE DODGE (opponent avoidance) =====
+            // Tilt is the final output gate (applied after assists/anchor/dodge),
+            // so we read it here for the dodge/pin suppression only.
+            val tipping = tiltGuard.isTipping()
             // Use WorldModel opponent tracks + vision to dodge incoming robots.
             if (DODGE_ENABLED && !tipping && !pushed && shadowWorld != null) {
                 val opponents = shadowWorld.opponents()
@@ -369,10 +368,16 @@ class BioBuzzTeleOp : LinearOpMode() {
             // Detect when we're pinned (high commanded vel, near-zero measured vel,
             // opponent nearby). Execute: BACKUP -> ROTATE -> RETRY FORWARD.
             if (PIN_DETECTION_ENABLED && locator != null && !tipping) {
-                val commandedSpeed = hypot(forward, strafe)
+                val commandedVel = locator.lastCommandedVelocity
+                val commandedSpeed = if (commandedVel != null) {
+                    hypot(commandedVel.component1().x, commandedVel.component1().y)
+                } else {
+                    0.0
+                }
+                val pinCommandThreshold = 0.2 * DrivetrainSpec.driveFreeSpeedInPerSec
                 val measuredVel = locator.lastMeasuredVelocity
                 val measuredSpeed = if (measuredVel != null) hypot(measuredVel.component1().x, measuredVel.component1().y) else 0.0
-                val velRatio = if (commandedSpeed > 0.2) measuredSpeed / commandedSpeed else 1.0
+                val velRatio = if (commandedSpeed > pinCommandThreshold) measuredSpeed / commandedSpeed else 1.0
 
                 // Opponent nearby check
                 var opponentNear = false
@@ -383,7 +388,7 @@ class BioBuzzTeleOp : LinearOpMode() {
                     }
                 }
 
-                val pinned = commandedSpeed > 0.2 && velRatio < PIN_VEL_RATIO_THRESHOLD && opponentNear
+                val pinned = commandedSpeed > pinCommandThreshold && velRatio < PIN_VEL_RATIO_THRESHOLD && opponentNear
                 val now = System.nanoTime()
 
                 if (pinned) {
@@ -474,7 +479,14 @@ class BioBuzzTeleOp : LinearOpMode() {
                 }
             }
 
-            drivetrain?.driveTeleOp(forward, strafe, turn)
+            // Tilt safety is the last output gate. The next pose update compares
+            // fresh measured velocity with this actual post-tilt output.
+            val outForward = if (tipping) 0.0 else forward
+            val outStrafe = if (tipping) 0.0 else strafe
+            val outTurn = if (tipping) 0.0 else turn
+            locator?.lastCommandedVelocity =
+                MecanumDrive.teleopCommandToVelocity(outForward, outStrafe, outTurn)
+            drivetrain?.driveTeleOp(outForward, outStrafe, outTurn)
             vision?.periodic()
 
             if (manualOnly) {
@@ -500,8 +512,8 @@ class BioBuzzTeleOp : LinearOpMode() {
             }
             if (now - lastLogNanos > (1e9 / BLACKBOX_STATE_LOG_HZ).toLong()) {
                 lastLogNanos = now
-                BlackBox.log(
-                    "record" to "teleop",
+                BlackBox.event(
+                    "teleop",
                     "fwd" to forward, "strafe" to strafe, "turn" to turn,
                     "a" to gamepad1.a, "b" to gamepad1.b,
                     "rb" to gamepad1.right_bumper, "lb" to gamepad1.left_bumper,

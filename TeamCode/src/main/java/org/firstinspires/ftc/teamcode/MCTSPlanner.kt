@@ -76,6 +76,9 @@ class MCTSPlanner(
         val parent: Node? = null,
         val action: PlannerAction? = null,
         val targetId: Int = -1,
+        /** Discounted immediate rewards earned on the root-to-node path. */
+        val pathValue: Double = 0.0,
+        val depth: Int = 0,
     ) {
         var visits = 0
         var totalValue = 0.0
@@ -106,8 +109,11 @@ class MCTSPlanner(
      * balls out of the robot's actual map and black out real flower patches
      * it had never touched. The sets below are the simulation's private
      * overlay, so the live world is never mutated by the search.
+     *
+     * Exposed ([internal]) so unit tests can build a simulation state and
+     * assert that failed outcomes leave it untouched.
      */
-    private class SimState(
+    internal class SimState(
         var world: WorldModel,
         var ballsHeld: Int,
         var timeRemaining: Double,
@@ -119,6 +125,8 @@ class MCTSPlanner(
         val pulledFlowerIds: MutableSet<Int> = mutableSetOf(),
         /** Flower cluster ids the playout has already pulled. */
         val pulledClusterIds: MutableSet<Int> = mutableSetOf(),
+        /** Full score value of the held contents, including nectar flowers. */
+        var heldScoreValue: Double = ballsHeld * POLLEN_VALUE,
     ) {
         /** Deep-ish copy: the overlay sets are copied so branches stay independent. */
         fun copy(): SimState = SimState(
@@ -130,6 +138,7 @@ class MCTSPlanner(
             collectedBallIds = collectedBallIds.toMutableSet(),
             pulledFlowerIds = pulledFlowerIds.toMutableSet(),
             pulledClusterIds = pulledClusterIds.toMutableSet(),
+            heldScoreValue = heldScoreValue,
         )
     }
 
@@ -237,12 +246,17 @@ class MCTSPlanner(
         if (untried.isEmpty()) return node
         val action = untried.removeAt(random.nextInt(untried.size))
         node.untriedActions = untried
-        val newState = applyAction(action, node.state)
+        // Resolve the outcome once so expansion is coherent with rollouts:
+        // the same draw that decides success also drives the state transition.
+        val outcome = resolveAction(action, node.state)
+        val newState = applyAction(action, node.state, outcome)
         val child = Node(
             state = newState,
             parent = node,
             action = action.action,
             targetId = action.targetId,
+            pathValue = node.pathValue + outcome.immediateValue * Math.pow(0.95, node.depth.toDouble()),
+            depth = node.depth + 1,
         )
         child.untriedActions = generateActions(newState)
         // Add to parent's children array
@@ -262,17 +276,22 @@ class MCTSPlanner(
         // Copy the node's state so the playout's own collection/pulling
         // bookkeeping does not leak back into the tree.
         var state = node.state.copy()
-        var totalValue = 0.0
-        var depth = 0
+        // Expansion resolves real rewards too. Carry the whole root-to-node
+        // path or a successful expanded GO_SCORE would look worse than HOLD.
+        var totalValue = node.pathValue
+        var depth = node.depth
 
         while (depth < maxDepth && state.timeRemaining > PLANNER_PARK_SEC + 1.0) {
             val actions = generateActions(state)
             if (actions.isEmpty()) break
 
             val action = selectPlayoutAction(state, actions)
-            val (value, cost) = simulateAction(action, state)
-            totalValue += value * Math.pow(0.95, depth.toDouble()) // discount future
-            state = applyAction(action, state)
+            // Resolve the outcome once: the immediate reward AND the state
+            // transition come from the same draw, so a failed pickup never
+            // puts a ball in the hopper and a failed score never empties it.
+            val outcome = resolveAction(action, state)
+            totalValue += outcome.immediateValue * Math.pow(0.95, depth.toDouble()) // discount future
+            state = applyAction(action, state, outcome)
             depth++
 
             if (state.timeRemaining <= PLANNER_PARK_SEC + 1.0) {
@@ -282,8 +301,8 @@ class MCTSPlanner(
             }
         }
 
-        // Terminal value: balls held * value (they're lost if not scored)
-        totalValue += state.ballsHeld * POLLEN_VALUE * 0.5 // partial credit for held balls
+        // Terminal value: partial credit for the exact held contents.
+        totalValue += state.heldScoreValue * 0.5
         return totalValue
     }
 
@@ -363,7 +382,7 @@ class MCTSPlanner(
      * not offered again — without that the playout would keep re-collecting
      * the same ball and the search would believe in infinite pollen.
      */
-    private fun generateActions(state: SimState): List<PlannerDecision> {
+    internal fun generateActions(state: SimState): List<PlannerDecision> {
         val world = state.world
         val ballsHeld = state.ballsHeld
         val timeRemaining = state.timeRemaining
@@ -388,31 +407,33 @@ class MCTSPlanner(
             actions.add(PlannerDecision(PlannerAction.GO_SCORE, -1, "Hive", hive?.first ?: 0.0, hive?.second ?: 0.0, ballsHeld * POLLEN_VALUE, scoreTime, "MCTS score"))
         }
 
-        // COLLECT_BALL for each viable ball
-        for (b in world.balls()) {
-            if (b.id in state.collectedBallIds) continue // already picked up in this playout
-            if (b.ageSec(System.nanoTime()) > DEAD_RECKON_MAX_AGE_SEC) continue
-            if (b.lastAreaPx < CHASE_MIN_CONTOUR_AREA_PX) continue
-            val dist = b.distanceTo(robotX, robotY)
-            val baseT = dist / ROBOT_SPEED_CM_PER_SEC
-            val obstaclePenalty = if (world.isPathBlocked(robotX, robotY, b.fieldXcm, b.fieldYcm)) 2.0 else 0.0
-            val t = baseT + PLANNER_COLLECT_HANDLE_SEC + obstaclePenalty
-            if (timeRemaining < t + scoreTime + PLANNER_ENDGAME_MARGIN_SEC) continue
-            var v = b.value * b.confidence
-            for (o in opponents) {
-                if (o.distanceTo(b.fieldXcm, b.fieldYcm) < dist) {
-                    val intentDiscount = when (o.intent) {
-                        OpponentIntent.DEFENDING -> 0.3
-                        OpponentIntent.SCORING -> 0.5
-                        OpponentIntent.COLLECTING -> 0.4
-                        OpponentIntent.TRANSIT -> 0.7
-                        OpponentIntent.UNKNOWN -> PLANNER_OPPONENT_DISCOUNT
+        // COLLECT_BALL for each viable ball (never when the hopper is full)
+        if (state.ballsHeld < MAX_BALLS_HELD) {
+            for (b in world.balls()) {
+                if (b.id in state.collectedBallIds) continue // already picked up in this playout
+                if (b.ageSec(System.nanoTime()) > DEAD_RECKON_MAX_AGE_SEC) continue
+                if (b.lastAreaPx < CHASE_MIN_CONTOUR_AREA_PX) continue
+                val dist = b.distanceTo(robotX, robotY)
+                val baseT = dist / ROBOT_SPEED_CM_PER_SEC
+                val obstaclePenalty = if (world.isPathBlocked(robotX, robotY, b.fieldXcm, b.fieldYcm)) 2.0 else 0.0
+                val t = baseT + PLANNER_COLLECT_HANDLE_SEC + obstaclePenalty
+                if (timeRemaining < t + scoreTime + PLANNER_ENDGAME_MARGIN_SEC) continue
+                var v = b.value * b.confidence
+                for (o in opponents) {
+                    if (o.distanceTo(b.fieldXcm, b.fieldYcm) < dist) {
+                        val intentDiscount = when (o.intent) {
+                            OpponentIntent.DEFENDING -> 0.3
+                            OpponentIntent.SCORING -> 0.5
+                            OpponentIntent.COLLECTING -> 0.4
+                            OpponentIntent.TRANSIT -> 0.7
+                            OpponentIntent.UNKNOWN -> PLANNER_OPPONENT_DISCOUNT
+                        }
+                        v *= intentDiscount * o.intentConfidence.coerceIn(0.3, 1.0) * (0.8 + 0.4 * random.nextDouble())
+                        break
                     }
-                    v *= intentDiscount * o.intentConfidence.coerceIn(0.3, 1.0) * (0.8 + 0.4 * random.nextDouble())
-                    break
                 }
+                actions.add(PlannerDecision(PlannerAction.COLLECT_BALL, b.id, b.label, b.fieldXcm, b.fieldYcm, v, t, "MCTS collect"))
             }
-            actions.add(PlannerDecision(PlannerAction.COLLECT_BALL, b.id, b.label, b.fieldXcm, b.fieldYcm, v, t, "MCTS collect"))
         }
 
         // USE_FLOWER for each viable flower cluster
@@ -461,20 +482,41 @@ class MCTSPlanner(
         return actions
     }
 
-    /** Simulates the stochastic outcome of an action. Returns (value, cost). */
-    private fun simulateAction(action: PlannerDecision, state: SimState): Pair<Double, Double> {
-        return when (action.action) {
+    /**
+     * The realized outcome of an action in the simulation: whether it
+     * succeeded, the immediate reward it yields, and the time it costs.
+     *
+     * The outcome is resolved ONCE ([resolveAction]) and reused by both value
+     * estimation ([simulate]) and state transition ([applyAction]), so the
+     * two stay coherent: a pickup that "failed" never puts a ball in the
+     * hopper, and a score that "failed" never empties it.
+     *
+     * Value is awarded exactly once. Collection itself yields no immediate
+     * points — the held contents are paid at [GO_SCORE] using [SimState.heldScoreValue]
+     * (including nectar value) or as partial terminal credit. This prevents a
+     * pickup from being rewarded both at collection and at scoring/terminal.
+     */
+    internal data class ActionOutcome(
+        val succeeded: Boolean,
+        val immediateValue: Double,
+        val cost: Double,
+    )
+
+    /** Resolves the stochastic outcome of [action] from [state]. */
+    internal fun resolveAction(action: PlannerDecision, state: SimState): ActionOutcome {
+        val (succeeded, value) = when (action.action) {
             PlannerAction.COLLECT_BALL -> {
                 // Stochastic pickup success (80-95% based on confidence)
                 val track = state.world.trackById(action.targetId)
                 val successProb = (track?.confidence ?: 0.5) * 0.9 + 0.1
                 val success = random.nextDouble() < successProb
-                val value = if (success) action.expectedValue else 0.0
                 // Opponent might steal during approach
                 val stolen = state.world.opponents().any { o ->
                     o.distanceTo(action.targetFieldXcm, action.targetFieldYcm) < 50.0 && random.nextDouble() < 0.3
                 }
-                Pair(if (stolen) 0.0 else value, action.estCostSec)
+                // No immediate points at collection: value is awarded once at
+                // scoring (GO_SCORE) or as partial terminal credit.
+                Pair(success && !stolen, 0.0)
             }
             PlannerAction.GO_SCORE -> {
                 // Stochastic scoring success (90% base, drops with distance)
@@ -482,40 +524,55 @@ class MCTSPlanner(
                 val dist = if (hive != null) hypot(hive.first - state.robotX, hive.second - state.robotY) else 150.0
                 val scoreProb = (0.95 - (dist / 200.0) * 0.2).coerceIn(0.5, 0.95)
                 val success = random.nextDouble() < scoreProb
-                val value = if (success) state.ballsHeld * POLLEN_VALUE else 0.0
-                Pair(value, action.estCostSec)
+                Pair(success, if (success) state.heldScoreValue else 0.0)
             }
             PlannerAction.USE_FLOWER -> {
-                // Flower cluster success ~85%, yields nectar (2x pollen per flower)
                 val success = random.nextDouble() < 0.85
-                val value = if (success) action.expectedValue else 0.0
-                Pair(value, action.estCostSec)
+                // Like ball collection, a flower adds future scoring value to
+                // the hopper; it is not also an immediate score.
+                Pair(success, 0.0)
             }
-            PlannerAction.PARK -> Pair(0.0, PLANNER_PARK_SEC)
-            PlannerAction.HOLD -> Pair(0.0, 0.5)
+            PlannerAction.PARK -> Pair(true, 0.0)
+            PlannerAction.HOLD -> Pair(true, 0.0)
         }
+        val cost = when (action.action) {
+            PlannerAction.PARK -> PLANNER_PARK_SEC
+            PlannerAction.HOLD -> 0.5
+            else -> action.estCostSec
+        }
+        return ActionOutcome(succeeded, value, cost)
     }
 
     /**
-     * Applies an action to the simulation state.
+     * Applies an action to the simulation state, consistent with [outcome]
+     * as resolved by [resolveAction]. A failed pickup adds nothing to the
+     * hopper and marks no track as collected; a failed score empties nothing.
      *
      * The returned state is a COPY: the live WorldModel is never touched by
      * the search. Balls "collected" and flowers "pulled" during the playout
      * are recorded in the simulation overlay (see [SimState]) so the playout
      * cannot pick the same ball up twice.
      */
-    private fun applyAction(action: PlannerDecision, state: SimState): SimState {
+    internal fun applyAction(action: PlannerDecision, state: SimState, outcome: ActionOutcome): SimState {
         val newState = state.copy()
-        newState.timeRemaining -= action.estCostSec
+        newState.timeRemaining -= outcome.cost
         when (action.action) {
             PlannerAction.COLLECT_BALL -> {
-                if (newState.ballsHeld < MAX_BALLS_HELD) newState.ballsHeld++
-                newState.collectedBallIds.add(action.targetId)
+                // Only a successful pickup puts a ball in the hopper and
+                // records the track as collected.
+                if (outcome.succeeded && newState.ballsHeld < MAX_BALLS_HELD) {
+                    newState.ballsHeld++
+                    newState.heldScoreValue += newState.world.trackById(action.targetId)?.value ?: POLLEN_VALUE
+                    newState.collectedBallIds.add(action.targetId)
+                }
                 newState.robotX = action.targetFieldXcm
                 newState.robotY = action.targetFieldYcm
             }
             PlannerAction.GO_SCORE -> {
-                newState.ballsHeld = 0 // scored all
+                if (outcome.succeeded) {
+                    newState.ballsHeld = 0 // scored all
+                    newState.heldScoreValue = 0.0
+                }
                 val hive = newState.world.hive()
                 if (hive != null) {
                     newState.robotX = hive.first
@@ -523,26 +580,32 @@ class MCTSPlanner(
                 }
             }
             PlannerAction.USE_FLOWER -> {
-                // A cluster id means "pull this patch"; anything else is a
-                // single flower.
-                val cluster = newState.world.flowerClusters().firstOrNull { it.id == action.targetId }
-                if (cluster != null) {
-                    val now = System.nanoTime()
-                    val usable = cluster.flowers.count {
-                        it.id !in newState.pulledFlowerIds &&
-                            newState.world.flowerState(it.id, now) == FlowerState.FULL
+                if (outcome.succeeded) {
+                    // A cluster id means "pull this patch"; anything else is a
+                    // single flower.
+                    val cluster = newState.world.flowerClusters().firstOrNull { it.id == action.targetId }
+                    if (cluster != null) {
+                        val now = System.nanoTime()
+                        val usable = cluster.flowers.count {
+                            it.id !in newState.pulledFlowerIds &&
+                                newState.world.flowerState(it.id, now) == FlowerState.FULL
+                        }
+                        val gained = minOf(usable, MAX_BALLS_HELD - newState.ballsHeld)
+                        newState.ballsHeld += gained
+                        if (gained > 0) newState.heldScoreValue += action.expectedValue
+                        newState.pulledClusterIds.add(cluster.id)
+                        for (f in cluster.flowers) newState.pulledFlowerIds.add(f.id)
+                        newState.robotX = cluster.centerXcm
+                        newState.robotY = cluster.centerYcm
+                    } else {
+                        if (newState.ballsHeld < MAX_BALLS_HELD) {
+                            newState.ballsHeld++
+                            newState.heldScoreValue += action.expectedValue
+                        }
+                        newState.pulledFlowerIds.add(action.targetId)
+                        newState.robotX = action.targetFieldXcm
+                        newState.robotY = action.targetFieldYcm
                     }
-                    val gained = minOf(usable, MAX_BALLS_HELD - newState.ballsHeld)
-                    newState.ballsHeld += gained
-                    newState.pulledClusterIds.add(cluster.id)
-                    for (f in cluster.flowers) newState.pulledFlowerIds.add(f.id)
-                    newState.robotX = cluster.centerXcm
-                    newState.robotY = cluster.centerYcm
-                } else {
-                    if (newState.ballsHeld < MAX_BALLS_HELD) newState.ballsHeld++
-                    newState.pulledFlowerIds.add(action.targetId)
-                    newState.robotX = action.targetFieldXcm
-                    newState.robotY = action.targetFieldYcm
                 }
             }
             PlannerAction.PARK -> {}

@@ -91,7 +91,14 @@ def _events(conn, session_ref):
     ).fetchall()
     if not rows:
         return []
-    fields = conn.execute("SELECT * FROM event_field").fetchall()
+    # Only fields of events belonging to THIS session: a join on event keeps
+    # another session's event_field rows from leaking in.
+    fields = conn.execute(
+        "SELECT ef.* FROM event_field ef "
+        "JOIN event e ON ef.event_ref = e.id "
+        "WHERE e.session_ref = ?",
+        (session_ref,),
+    ).fetchall()
     by_event = {}
     for f in fields:
         by_event.setdefault(f["event_ref"], []).append(f)
