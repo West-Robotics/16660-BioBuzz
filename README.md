@@ -859,7 +859,8 @@ the wheels spin fast.
 | X | BOTH spin — and they **counter-rotate** |
 | Y | Everything stops |
 
-Telemetry shows commanded RPM and measured RPM for each side.
+Telemetry shows commanded RPM, measured RPM, and current for each side. If stall
+protection trips, both motors stop; clear the mechanism, then press **Back** to reset.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
@@ -978,6 +979,27 @@ ball passes through. Constants:
 
 If shots are not registering, lower `SHOT_DIP_THRESHOLD_RPM`. If false shots
 are registering, raise it.
+
+## 8.7 Flywheel stall protection
+
+Each flywheel watches its encoder RPM and motor current. After the spin-up grace
+period, a wheel reading no more than 150 RPM while drawing stall current for
+750 ms stops **both** motors. Ordinary ball-load dips reset the timer. A missing
+current reading falls back to RPM-only detection; a missing motor is never
+treated as stalled.
+
+| Constant | Default | Purpose |
+|----------|---------|---------|
+| `FLYWHEEL_SPINUP_SEC` | 2.0 s | Grace after a new RPM target |
+| `FLYWHEEL_STALL_MAX_RPM` | 150 | Maximum speed considered stalled |
+| `FLYWHEEL_STALL_CURRENT_A` | 3.5 A | Loaded-current threshold; validate on the real robot |
+| `FLYWHEEL_STALL_SUSTAIN_MS` | 750 ms | Required continuous stall duration |
+
+A stall is latched: priming, firing, or `stop()` does not clear it. Remove the
+obstruction, then press **Back** in TeleOp, SelfPlay, Flywheel Direction Test,
+or Flywheel Calibration. Autonomous aborts firing instead of resetting itself.
+Use the current telemetry and Black Box fields to check the threshold against
+normal spin-up and shooting loads before competition.
 
 ---
 

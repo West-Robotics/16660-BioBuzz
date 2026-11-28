@@ -350,6 +350,7 @@ class FlywheelCalibration : LinearOpMode() {
     private var lastA = false
     private var lastB = false
     private var lastX = false
+    private var lastStallReset = false
 
     private fun commandedRpm(): Double =
         (rpmSteps[stepIdx] + fineRpm).coerceIn(0.0, FLYWHEEL_MOTOR_MAX_RPM)
@@ -384,6 +385,9 @@ class FlywheelCalibration : LinearOpMode() {
 
         while (opModeIsActive()) {
             NextMotor.motorEventLoop.poll()
+            flywheel.update()
+            if (gamepad1.back && !lastStallReset) flywheel.resetStall()
+            lastStallReset = gamepad1.back
             if (gamepad1.dpad_up && !lastDpadUp && stepIdx < rpmSteps.size - 1) {
                 stepIdx++; fineRpm = 0.0
             }
@@ -407,6 +411,7 @@ class FlywheelCalibration : LinearOpMode() {
                 loader.stroke()
                 while (opModeIsActive() && loader.busy) {
                     NextMotor.motorEventLoop.poll()
+                    flywheel.update()
                     telemetry.addData("LOADER", "stroking...")
                     telemetry.update()
                 }
@@ -414,6 +419,7 @@ class FlywheelCalibration : LinearOpMode() {
                 detector.arm()
                 while (opModeIsActive() && detector.update() == ShotDetector.State.ARMED) {
                     NextMotor.motorEventLoop.poll()
+                    flywheel.update()
                     telemetry.addData(
                         "SHOT WATCH",
                         "%.0f RPM (need a %.0f RPM dip)".format(
@@ -431,6 +437,13 @@ class FlywheelCalibration : LinearOpMode() {
                 )
             }
 
+            if (flywheel.stalled) {
+                telemetry.addLine("!! ${flywheel.stallSide} STALLED — motors OFF; clear jam, press Back !!")
+            }
+            telemetry.addData(
+                "Current L/R (A)",
+                "%.1f / %.1f".format(flywheel.leftCurrentAmps() ?: -1.0, flywheel.rightCurrentAmps() ?: -1.0),
+            )
             telemetry.addData("Commanded", String.format(Locale.US, "%.0f RPM", rpm))
             telemetry.addData(
                 "Measured L/R",

@@ -83,6 +83,11 @@ const val FLYWHEEL_PRIME_ENABLED = true
 const val FLYWHEEL_PRIME_RPM = 2000.0
 // Fire only when BOTH wheels are within this many RPM of the commanded speed.
 const val FLYWHEEL_SPEED_TOLERANCE_RPM = 150.0
+const val FLYWHEEL_STALL_MIN_COMMAND_RPM = 500.0
+const val FLYWHEEL_STALL_MAX_RPM = 150.0
+const val FLYWHEEL_STALL_CURRENT_A = 3.5      // MEASURE: above normal loaded current, below stall current
+const val FLYWHEEL_STALL_SUSTAIN_MS = 750.0   // brief ball-load dips must recover within this window
+const val FLYWHEEL_STALL_TARGET_DELTA_RPM = 250.0
 // How long the intake runs to feed one ball into the spinning flywheel.
 // (Legacy: firing now uses the LOADER below — this stays for manual/other uses.)
 const val FLYWHEEL_FEED_TIME_MS = 1200.0
@@ -278,7 +283,7 @@ const val SHADOW_PLANNER_ENABLED = true
 // Strategic/Pathfinding Constants (BIOBUZZ)
 const val NECTAR_SCORE_MULTIPLIER = 2.0 // Nectar is worth more points than Pollen
 const val ROBOT_SPEED_CM_PER_SEC = 100.0 // Placeholder: Measure actual robot speed
-const val FLYWHEEL_SPINUP_SEC = 2.0 // Placeholder: informational only; spin-up runs in parallel with travel
+const val FLYWHEEL_SPINUP_SEC = 2.0 // stall guard ignores low RPM this long after a new speed target
 const val FLYWHEEL_PRESPIN_BALL_COUNT = 2 // Start warming the flywheel once we hold this many balls
 
 // ================== BIOBUZZ GAME LOGIC (tune these between matches) ==================

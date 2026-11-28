@@ -66,6 +66,7 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
     private var lastLoggedDecision: PlannerDecision? = null
     private var lastDecisionNanos = 0L
     private var lastStateLogNanos = 0L
+    private var lastStallReset = false
 
     private fun toCm(inches: Double) = inches * 2.54
 
@@ -163,6 +164,9 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
         try {
             while (opModeIsActive()) {
                 NextMotor.motorEventLoop.poll()
+                flywheel.update()
+                if (gamepad1.back && !lastStallReset) flywheel.resetStall()
+                lastStallReset = gamepad1.back
                 val elapsed = runtime - clockStartRuntime
                 val remaining = (MATCH_TELEOP_SECONDS - elapsed).coerceAtLeast(0.0)
                 val now = System.nanoTime()
@@ -244,12 +248,18 @@ class BioBuzzSelfPlayTeleOp : LinearOpMode() {
                         "action" to decision.action.name, "targetId" to decision.targetId,
                         "flyL" to flywheel.measuredLeftRpm(),
                         "flyR" to flywheel.measuredRightRpm(),
+                        "flyLA" to flywheel.leftCurrentAmps(),
+                        "flyRA" to flywheel.rightCurrentAmps(),
+                        "flyStalled" to flywheel.stalled,
                         "batteryV" to batteryVolts(),
                         "tiltDeg" to (tiltGuard?.tiltDeg() ?: 0.0),
                     )
                     world.logToBlackBox()
                 }
 
+                if (flywheel.stalled) {
+                    telemetry.addLine("!! FLYWHEEL ${flywheel.stallSide} STALLED — motors OFF; clear jam, press Back !!")
+                }
                 telemetry.addData("CLOCK", "%.0fs left".format(remaining))
                 telemetry.addData("PLAN", "%s — %s".format(decision.action.name, decision.rationale))
                 telemetry.addData("BALLS HELD", "$ballsHeld / $MAX_BALLS_HELD")

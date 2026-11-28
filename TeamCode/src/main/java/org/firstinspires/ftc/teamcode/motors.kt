@@ -311,6 +311,63 @@ class PickupCurrentSensor(private val intake: Intake) {
     }
 }
 
+internal class FlywheelStallGuard(
+    private val spinupGraceNanos: Long = (FLYWHEEL_SPINUP_SEC * 1e9).toLong(),
+    private val stallSustainNanos: Long = (FLYWHEEL_STALL_SUSTAIN_MS * 1e6).toLong(),
+) {
+    enum class State { IDLE, SPINNING_UP, RUNNING, STALLED }
+
+    var state = State.IDLE
+        private set
+    private var targetRpm = 0.0
+    private var commandStartedNanos: Long? = null
+    private var stallSinceNanos: Long? = null
+
+    fun reset() {
+        state = State.IDLE
+        targetRpm = 0.0
+        commandStartedNanos = null
+        stallSinceNanos = null
+    }
+
+    fun update(commandedRpm: Double, measuredRpm: Double, currentAmps: Double?, nowNanos: Long): State {
+        if (state == State.STALLED) return state
+        if (commandedRpm < FLYWHEEL_STALL_MIN_COMMAND_RPM) {
+            reset()
+            return state
+        }
+        val stalledNow = kotlin.math.abs(measuredRpm) <= FLYWHEEL_STALL_MAX_RPM &&
+            (currentAmps == null || currentAmps >= FLYWHEEL_STALL_CURRENT_A)
+        if (state == State.IDLE ||
+            (kotlin.math.abs(commandedRpm - targetRpm) >= FLYWHEEL_STALL_TARGET_DELTA_RPM && !stalledNow)
+        ) {
+            state = State.SPINNING_UP
+            targetRpm = commandedRpm
+            commandStartedNanos = nowNanos
+            stallSinceNanos = null
+        }
+
+        if (!stalledNow) {
+            stallSinceNanos = null
+            if (state == State.SPINNING_UP && nowNanos - commandStartedNanos!! >= spinupGraceNanos) {
+                state = State.RUNNING
+            }
+            return state
+        }
+
+        val commandStarted = commandStartedNanos!!
+        if (state == State.SPINNING_UP && nowNanos - commandStarted < spinupGraceNanos) return state
+        state = State.RUNNING
+        val stallSince = stallSinceNanos
+        if (stallSince == null) {
+            stallSinceNanos = nowNanos
+        } else if (nowNanos - stallSince >= stallSustainNanos) {
+            state = State.STALLED
+        }
+        return state
+    }
+}
+
 /**
  * DUAL 6000 RPM flywheel: one 5203-series Yellow Jacket on each side of the
  * ball, spinning OPPOSITE physical directions (left FORWARD, right REVERSE)
@@ -369,10 +426,33 @@ class FlyWheel(
 
     private val flyWheelLeft = motor(FlywheelLeftMotor, hasLeft, FLYWHEEL_LEFT_REVERSED)
     private val flyWheelRight = motor(FlywheelRightMotor, hasRight, FLYWHEEL_RIGHT_REVERSED)
+    private val leftStallGuard = FlywheelStallGuard()
+    private val rightStallGuard = FlywheelStallGuard()
+    private var leftTargetRpm = 0.0
+    private var rightTargetRpm = 0.0
+
+    val stalled: Boolean
+        get() = leftStallGuard.state == FlywheelStallGuard.State.STALLED ||
+            rightStallGuard.state == FlywheelStallGuard.State.STALLED
+
+    val stallSide: String
+        get() = when {
+            leftStallGuard.state == FlywheelStallGuard.State.STALLED &&
+                rightStallGuard.state == FlywheelStallGuard.State.STALLED -> "LEFT+RIGHT"
+            leftStallGuard.state == FlywheelStallGuard.State.STALLED -> "LEFT"
+            rightStallGuard.state == FlywheelStallGuard.State.STALLED -> "RIGHT"
+            else -> "NONE"
+        }
 
     /** Holds whichever wheels exist at [rpm], clamped to the motor's real top speed. */
     fun spinToRpm(rpm: Double) {
+        if (stalled) {
+            stopHardware()
+            return
+        }
         val target = rpm.coerceIn(0.0, FLYWHEEL_MOTOR_MAX_RPM)
+        leftTargetRpm = if (flyWheelLeft != null) target else 0.0
+        rightTargetRpm = if (flyWheelRight != null) target else 0.0
         flyWheelLeft?.setVelocitySetpoint(target.rpm)
         flyWheelRight?.setVelocitySetpoint(target.rpm)
     }
@@ -385,7 +465,13 @@ class FlyWheel(
      * @param left true to spin only the left wheel, false for only the right
      */
     fun spinOneWheelToRpm(left: Boolean, rpm: Double) {
+        if (stalled) {
+            stopHardware()
+            return
+        }
         val target = rpm.coerceIn(0.0, FLYWHEEL_MOTOR_MAX_RPM)
+        leftTargetRpm = if (left && flyWheelLeft != null) target else 0.0
+        rightTargetRpm = if (!left && flyWheelRight != null) target else 0.0
         if (left) {
             flyWheelLeft?.setVelocitySetpoint(target.rpm)
             flyWheelRight?.setVelocitySetpoint(0.0.rpm)
@@ -406,6 +492,16 @@ class FlyWheel(
     }
 
     fun stop(breakMotor: Boolean = false) {
+        if (!stalled) {
+            leftTargetRpm = 0.0
+            rightTargetRpm = 0.0
+            leftStallGuard.reset()
+            rightStallGuard.reset()
+        }
+        stopHardware(breakMotor)
+    }
+
+    private fun stopHardware(breakMotor: Boolean = false) {
         val zpb = if (breakMotor)
             NextMotor.ZeroPowerBehavior.BRAKE
         else
@@ -420,11 +516,62 @@ class FlyWheel(
         }
     }
 
+    private fun rpmOf(motor: NextMotor?): Double = try {
+        motor?.encoderVelocity?.into(RotationsPerMinute) ?: 0.0
+    } catch (_: Exception) {
+        0.0
+    }
+
+    private fun currentOf(motor: NextMotor?): Double? = try {
+        motor?.current?.magnitude
+    } catch (_: Exception) {
+        null
+    }
+
+    fun leftCurrentAmps(): Double? = currentOf(flyWheelLeft)
+    fun rightCurrentAmps(): Double? = currentOf(flyWheelRight)
+
+    /** Evaluates both guards against the latest command and sensor frame. */
+    fun update() {
+        if (stalled) {
+            stopHardware()
+            return
+        }
+        val now = System.nanoTime()
+        val leftWasStalled = leftStallGuard.state == FlywheelStallGuard.State.STALLED
+        val rightWasStalled = rightStallGuard.state == FlywheelStallGuard.State.STALLED
+        val leftState = leftStallGuard.update(leftTargetRpm, rpmOf(flyWheelLeft), currentOf(flyWheelLeft), now)
+        val rightState = rightStallGuard.update(rightTargetRpm, rpmOf(flyWheelRight), currentOf(flyWheelRight), now)
+        if (leftState == FlywheelStallGuard.State.STALLED && !leftWasStalled) {
+            BlackBox.event(
+                "flywheel_stalled", "side" to "LEFT", "targetRpm" to leftTargetRpm,
+                "measuredRpm" to rpmOf(flyWheelLeft), "currentA" to currentOf(flyWheelLeft),
+            )
+        }
+        if (rightState == FlywheelStallGuard.State.STALLED && !rightWasStalled) {
+            BlackBox.event(
+                "flywheel_stalled", "side" to "RIGHT", "targetRpm" to rightTargetRpm,
+                "measuredRpm" to rpmOf(flyWheelRight), "currentA" to currentOf(flyWheelRight),
+            )
+        }
+        if (stalled) stopHardware(breakMotor = true)
+    }
+
+    /** Clears the latched shutdown after the mechanism has been made safe. */
+    fun resetStall() {
+        leftTargetRpm = 0.0
+        rightTargetRpm = 0.0
+        leftStallGuard.reset()
+        rightStallGuard.reset()
+        stopHardware(breakMotor = true)
+        BlackBox.event("flywheel_stall_reset")
+    }
+
     /** Measured LEFT wheel speed from the encoder, RPM (0.0 when absent). */
-    fun measuredLeftRpm(): Double = flyWheelLeft?.encoderVelocity?.into(RotationsPerMinute) ?: 0.0
+    fun measuredLeftRpm(): Double = rpmOf(flyWheelLeft)
 
     /** Measured RIGHT wheel speed from the encoder, RPM (0.0 when absent). */
-    fun measuredRightRpm(): Double = flyWheelRight?.encoderVelocity?.into(RotationsPerMinute) ?: 0.0
+    fun measuredRightRpm(): Double = rpmOf(flyWheelRight)
 
     /**
      * Average measured speed across the wheels that EXIST, RPM (0.0 with no
@@ -445,7 +592,7 @@ class FlyWheel(
      * shot. A zero-wheel flywheel is never at speed.
      */
     fun isAtSpeed(targetRpm: Double, toleranceRpm: Double = FLYWHEEL_SPEED_TOLERANCE_RPM): Boolean {
-        if (!anyMotor) return false
+        if (!anyMotor || stalled) return false
         if (flyWheelLeft != null && kotlin.math.abs(measuredLeftRpm() - targetRpm) > toleranceRpm) return false
         if (flyWheelRight != null && kotlin.math.abs(measuredRightRpm() - targetRpm) > toleranceRpm) return false
         return true

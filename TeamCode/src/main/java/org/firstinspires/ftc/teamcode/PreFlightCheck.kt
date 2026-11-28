@@ -294,10 +294,16 @@ class PreFlightCheck : LinearOpMode() {
             var right = 0.0
             while (opModeIsActive() && System.currentTimeMillis() < deadline) {
                 NextMotor.motorEventLoop.poll()
+                flywheel.update()
+                if (flywheel.stalled) break
                 left = flywheel.measuredLeftRpm()
                 right = flywheel.measuredRightRpm()
                 if (left > 100.0 && right > 100.0) break
                 sleep(30)
+            }
+            if (flywheel.stalled) {
+                fail("Flywheels", "${flywheel.stallSide} stalled — protection stopped both motors")
+                return
             }
             if (left < 100.0 || right < 100.0) {
                 fail(

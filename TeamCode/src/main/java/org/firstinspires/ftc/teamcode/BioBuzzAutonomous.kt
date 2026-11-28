@@ -754,6 +754,10 @@ class BioBuzzAutonomous : LinearOpMode() {
             "auto",
         )
         flywheel.spinToRpm(rpm)
+        if (flywheel.stalled) {
+            BlackBox.event("fire_aborted", "reason" to "flywheel stalled", "side" to flywheel.stallSide)
+            return FireResult(0, 0)
+        }
         // "hiveCm" is required by tools/shooter_refit.py — without it
         // every autonomous shot is silently unusable for curve fitting.
         BlackBox.event("fire_start", "rpm" to rpm, "hiveCm" to fireTarget?.distanceCm)
@@ -762,8 +766,9 @@ class BioBuzzAutonomous : LinearOpMode() {
         // (the 6000 RPM motors spin up slowly) before feeding balls.
         val spinDeadline = System.nanoTime() +
             (clock.remainingSec().coerceAtMost(AUTONOMY_FIRE_RESERVE_SEC) * 1e9).toLong()
-        while (opModeIsActive() && !flywheel.isAtSpeed(rpm) && System.nanoTime() < spinDeadline) {
+        while (opModeIsActive() && !flywheel.stalled && !flywheel.isAtSpeed(rpm) && System.nanoTime() < spinDeadline) {
             NextMotor.motorEventLoop.poll()
+            flywheel.update()
             telemetry.addData("PHASE 4", "spinning up to %.0f RPM".format(rpm))
             telemetry.addData(
                 "Measured L/R",
@@ -772,6 +777,12 @@ class BioBuzzAutonomous : LinearOpMode() {
             telemetry.update()
         }
 
+        if (flywheel.stalled) {
+            BlackBox.event("fire_aborted", "reason" to "flywheel stalled", "side" to flywheel.stallSide)
+            telemetry.addData("PHASE 4", "ABORT FIRE — ${flywheel.stallSide} flywheel stalled")
+            telemetry.update()
+            return FireResult(0, 0)
+        }
         if (!flywheel.isAtSpeed(rpm)) {
             // Never feed balls into slow wheels: that's a weak shot
             // (and a possible stuck ball). Safe-skip instead.
@@ -790,7 +801,9 @@ class BioBuzzAutonomous : LinearOpMode() {
         var armed = false
         val fireDeadline = System.nanoTime() +
             (clock.remainingSec().coerceAtMost(AUTONOMY_FIRE_RESERVE_SEC) * 1e9).toLong()
-        while (attempted < ballCount && opModeIsActive() && System.nanoTime() < fireDeadline) {
+        while (attempted < ballCount && opModeIsActive() && !flywheel.stalled && System.nanoTime() < fireDeadline) {
+            flywheel.update()
+            if (flywheel.stalled) break
             when {
                 stroking && loader.busy -> report()
                 stroking && !armed -> {
@@ -847,6 +860,7 @@ class BioBuzzAutonomous : LinearOpMode() {
     /** Combined telemetry: hive range/angle, RR (fused) pose, vision health. */
     private fun report(target: HiveTarget? = null) {
         NextMotor.motorEventLoop.poll()
+        flywheel.update()
         val t = target ?: hive.update()
         tagOverlay.publish(t)
         hive.addTelemetry(telemetry, t)

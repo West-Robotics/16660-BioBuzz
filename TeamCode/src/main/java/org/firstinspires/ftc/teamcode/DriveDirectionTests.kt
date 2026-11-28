@@ -158,6 +158,7 @@ class FlywheelDirectionTest : LinearOpMode() {
 
         val flywheel = FlyWheel(hasLeft = hw.flywheelLeft, hasRight = hw.flywheelRight)
         val testRpm = 2000.0
+        var lastStallReset = false
 
         telemetry.addLine("FLYWHEEL DIRECTION TEST")
         telemetry.addLine("A=left only  B=right only  X=both  Y=stop")
@@ -168,6 +169,9 @@ class FlywheelDirectionTest : LinearOpMode() {
 
         while (opModeIsActive()) {
             dev.nextftc.hardware.actuators.NextMotor.motorEventLoop.poll()
+            flywheel.update()
+            if (gamepad1.back && !lastStallReset) flywheel.resetStall()
+            lastStallReset = gamepad1.back
 
             val target = if (gamepad1.y) 0.0 else testRpm
 
@@ -180,6 +184,13 @@ class FlywheelDirectionTest : LinearOpMode() {
                 else -> flywheel.stop()
             }
 
+            if (flywheel.stalled) {
+                telemetry.addLine("!! ${flywheel.stallSide} STALLED — motors OFF; clear jam, press Back !!")
+            }
+            telemetry.addData(
+                "Current L/R (A)",
+                "%.1f / %.1f".format(flywheel.leftCurrentAmps() ?: -1.0, flywheel.rightCurrentAmps() ?: -1.0),
+            )
             telemetry.addData(
                 "Commanded",
                 String.format(Locale.US, "%.0f RPM", target),

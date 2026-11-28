@@ -80,6 +80,7 @@ class BioBuzzTeleOp : LinearOpMode() {
     // Y button swaps between main (vision-assist) driving and JJ raw-stick driving.
     private var useJjDrive = false
     private var lastJjToggleBtn = false
+    private var lastStallReset = false
     private val anchorBudget = BoundedIntervention((ANCHOR_MAX_MS * 1e6).toLong())
     private val poseHoldBudget = BoundedIntervention((TELEOP_HOLD_MAX_MS * 1e6).toLong())
     private val interventionLockout = InterventionLockout()
@@ -183,6 +184,9 @@ class BioBuzzTeleOp : LinearOpMode() {
 
         while (opModeIsActive()) {
             ControlFrame.tick()
+            flywheel.update()
+            if (gamepad1.back && !lastStallReset) flywheel.resetStall()
+            lastStallReset = gamepad1.back
             // ---- driver input ----
             var forward = (-gamepad1.left_stick_y).toDouble()
             var strafe = gamepad1.left_stick_x.toDouble()
@@ -255,7 +259,7 @@ class BioBuzzTeleOp : LinearOpMode() {
                     else -> flywheel.stop()
                 }
             }
-            val readyToFire = flywheel.anyMotor && flywheel.isAtSpeed(shootingRpm)
+            val readyToFire = flywheel.anyMotor && !flywheel.stalled && flywheel.isAtSpeed(shootingRpm)
 
             // ---- intake: manual only — the LOADER meters balls during fire ----
             if (hw.intakeMotor) {
@@ -579,11 +583,17 @@ class BioBuzzTeleOp : LinearOpMode() {
                     "shootingRpm" to shootingRpm, "atSpeed" to readyToFire,
                     "flyL" to flywheel.measuredLeftRpm(),
                     "flyR" to flywheel.measuredRightRpm(),
+                    "flyLA" to flywheel.leftCurrentAmps(),
+                    "flyRA" to flywheel.rightCurrentAmps(),
+                    "flyStalled" to flywheel.stalled,
                     "batteryV" to ShotPredictor.reportHardwareMapVolts(hardwareMap),
                     "tiltDeg" to tiltGuard.tiltDeg(),
                     "shots" to loader.strokeCount,
                 )
                 shadowWorld.logToBlackBox()
+            }
+            if (flywheel.stalled) {
+                telemetry.addLine("!! FLYWHEEL ${flywheel.stallSide} STALLED — motors OFF; clear jam, press Back !!")
             }
             if (tipping) telemetry.addLine("!! TILT GUARD — drive power cut !!")
             if (anchorPaused) telemetry.addLine("ANCHOR PAUSED — release and move sticks to re-arm")
