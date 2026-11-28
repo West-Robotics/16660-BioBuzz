@@ -27,6 +27,20 @@ class ControlSafetyTest {
     }
 
     @Test
+    fun `shared intervention lockout requires a fresh driver input edge`() {
+        val lockout = InterventionLockout()
+        lockout.update(driverActive = true)
+        lockout.trip()
+
+        lockout.update(driverActive = true)
+        assertTrue(lockout.tripped)
+        lockout.update(driverActive = false)
+        assertTrue(lockout.tripped)
+        lockout.update(driverActive = true)
+        assertFalse(lockout.tripped)
+    }
+
+    @Test
     fun `encoder motion uses a real delta threshold`() {
         assertFalse(encoderMoved(100, 129, 30))
         assertTrue(encoderMoved(100, 130, 30))

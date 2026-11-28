@@ -77,6 +77,21 @@ object ControlFrame {
     }
 }
 
+internal class InterventionLockout {
+    private var driverWasActive = false
+    var tripped = false
+        private set
+
+    fun update(driverActive: Boolean) {
+        if (driverActive && !driverWasActive) tripped = false
+        driverWasActive = driverActive
+    }
+
+    fun trip() {
+        tripped = true
+    }
+}
+
 internal class BoundedIntervention(private val maxDurationNanos: Long) {
     private var startedNanos: Long? = null
     private var exhausted = false

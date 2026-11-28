@@ -82,6 +82,7 @@ class BioBuzzTeleOp : LinearOpMode() {
     private var lastJjToggleBtn = false
     private val anchorBudget = BoundedIntervention((ANCHOR_MAX_MS * 1e6).toLong())
     private val poseHoldBudget = BoundedIntervention((TELEOP_HOLD_MAX_MS * 1e6).toLong())
+    private val interventionLockout = InterventionLockout()
 
     override fun runOpMode() {
         // ---- BOOT HARDWARE PROBE: degrade gracefully if anything's missing ----
@@ -202,6 +203,9 @@ class BioBuzzTeleOp : LinearOpMode() {
             val jjForward = forward
             val jjStrafe = strafe
             val jjTurn = turn
+            val rawDriverActive = abs(jjForward) >= TELEOP_INPUT_DEADZONE ||
+                abs(jjStrafe) >= TELEOP_INPUT_DEADZONE || abs(jjTurn) >= TELEOP_INPUT_DEADZONE
+            interventionLockout.update(rawDriverActive)
 
             if (fieldCentric && locator != null) {
                 // Rotate the driver's WORLD-frame stick intent into the robot
@@ -329,9 +333,10 @@ class BioBuzzTeleOp : LinearOpMode() {
             // Also allow manual engage via RIGHT_BUMPER + LEFT_BUMPER combo.
             val pushed = locator?.isBeingPushed == true
             val manualAnchor = ANCHOR_ENGAGE_GAMEPAD && gamepad1.right_bumper && gamepad1.left_bumper
-            val anchorRequested = pushed || manualAnchor
+            val anchorRequested = !interventionLockout.tripped && (pushed || manualAnchor)
             val anchorAllowed = anchorBudget.allowed(anchorRequested, System.nanoTime())
-            val anchorPaused = anchorRequested && !anchorAllowed
+            val anchorPaused = (pushed || manualAnchor) && !anchorAllowed
+            if (anchorPaused) interventionLockout.trip()
             if (anchorAllowed) {
                 locator?.setAnchorManual(manualAnchor)
                 if (locator != null) {
@@ -484,7 +489,7 @@ class BioBuzzTeleOp : LinearOpMode() {
                 abs(strafe) < TELEOP_INPUT_DEADZONE &&
                 abs(turn) < TELEOP_INPUT_DEADZONE
             var poseHoldPaused = false
-            if (locator == null || !poseHold || useJjDrive || !idleDriveInput) {
+            if (locator == null || !poseHold || useJjDrive || !idleDriveInput || interventionLockout.tripped) {
                 poseHoldBudget.allowed(false, System.nanoTime())
             }
 
@@ -507,7 +512,10 @@ class BioBuzzTeleOp : LinearOpMode() {
                         val err = stillPose!!.minus(locator.pose)
                         val correctionNeeded = err.line.norm() > TELEOP_HOLD_POS_TOLERANCE_IN ||
                             abs(Math.toDegrees(err.angle)) > TELEOP_HOLD_HEADING_TOLERANCE_DEG
-                        val holdAllowed = poseHoldBudget.allowed(correctionNeeded, System.nanoTime())
+                        val holdAllowed = poseHoldBudget.allowed(
+                            correctionNeeded && !interventionLockout.tripped,
+                            System.nanoTime(),
+                        )
                         if (holdAllowed) {
                             val hf = (TELEOP_HOLD_POSITION_KP * err.line.x)
                                 .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
@@ -520,6 +528,7 @@ class BioBuzzTeleOp : LinearOpMode() {
                             turn = (turn + ht).coerceIn(-1.0, 1.0)
                         }
                         poseHoldPaused = correctionNeeded && !holdAllowed
+                        if (poseHoldPaused) interventionLockout.trip()
                     } else {
                         stillPose = null
                     }
@@ -577,8 +586,8 @@ class BioBuzzTeleOp : LinearOpMode() {
                 shadowWorld.logToBlackBox()
             }
             if (tipping) telemetry.addLine("!! TILT GUARD — drive power cut !!")
-            if (anchorPaused) telemetry.addLine("ANCHOR PAUSED — clear push/release bumpers to re-arm")
-            if (poseHoldPaused) telemetry.addLine("POSE HOLD PAUSED — move sticks to re-arm")
+            if (anchorPaused) telemetry.addLine("ANCHOR PAUSED — release and move sticks to re-arm")
+            if (poseHoldPaused) telemetry.addLine("POSE HOLD PAUSED — release and move sticks to re-arm")
             telemetry.addData("LOADER", "%d strokes fired".format(loader.strokeCount))
 
             telemetry.addData(
