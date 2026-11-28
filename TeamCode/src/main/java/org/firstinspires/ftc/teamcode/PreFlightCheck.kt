@@ -2,7 +2,7 @@ package org.firstinspires.ftc.teamcode
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp
-import com.qualcomm.robotcore.hardware.DcMotorEx
+import com.qualcomm.robotcore.hardware.DcMotor
 import com.qualcomm.robotcore.hardware.Servo
 import dev.nextftc.hardware.actuators.NextMotor
 import java.util.Locale
@@ -55,6 +55,7 @@ class PreFlightCheck : LinearOpMode() {
     }
 
     private val results = mutableListOf<Result>()
+    private lateinit var hardware: HardwareProbe.Report
 
     private fun pass(name: String, detail: String) =
         results.add(Result(name, "PASS", detail))
@@ -68,16 +69,37 @@ class PreFlightCheck : LinearOpMode() {
     override fun runOpMode() {
         telemetry.addLine("PRE-FLIGHT CHECK — hold START to begin")
         telemetry.update()
+        BlackBox.start(hardwareMap.appContext, "preflight")
+        hardware = HardwareProbe.probe(hardwareMap)
+        hardware.logToBlackBox()
         waitForStart()
+        if (!opModeIsActive()) {
+            BlackBox.stop()
+            return
+        }
 
-        checkDriveMotors()
-        checkImu()
-        checkDeadWheels()
-        checkFlywheels()
-        checkIntakeAndLoader()
-        checkCameras()
-
-        report()
+        try {
+            val checks = listOf(
+                "Drive motors" to ::checkDriveMotors,
+                "IMU" to ::checkImu,
+                "Dead wheels" to ::checkDeadWheels,
+                "Flywheels" to ::checkFlywheels,
+                "Intake and loader" to ::checkIntakeAndLoader,
+                "Cameras" to ::checkCameras,
+            )
+            for ((name, check) in checks) {
+                if (!opModeIsActive()) break
+                try {
+                    check()
+                } catch (e: Exception) {
+                    fail(name, "check aborted: ${e.message ?: e.javaClass.simpleName}")
+                }
+            }
+            if (opModeIsActive()) report()
+            while (opModeIsActive()) sleep(100)
+        } finally {
+            BlackBox.stop()
+        }
     }
 
     // ---------------------------------------------------------------- drive
@@ -102,21 +124,12 @@ class PreFlightCheck : LinearOpMode() {
             return
         }
 
-        // Read every encoder. A frozen encoder (loose wire) shows as a
-        // constant value.
-        val readings = names.map { (_, n) -> motorPosition(n) }
-        val frozen = names.filterIndexed { i, _ -> readings[i] == null }
-        if (frozen.isNotEmpty()) {
-            fail(
-                "Drive motors",
-                "no encoder reading from: ${frozen.joinToString { it.first }}",
-            )
-        } else {
-            pass(
-                "Drive motors",
-                "all 4 present, encoders reading (${readings.joinToString { "$it" }})",
-            )
+        val unreadable = names.filter { motorPosition(it.second) == null }
+        if (unreadable.isNotEmpty()) {
+            fail("Drive encoders", "cannot read: ${unreadable.joinToString { it.first }}")
+            return
         }
+        pass("Drive motors", "all 4 configured; manual encoder check follows")
 
         // Print the polarity table so it can be compared with the wiring by
         // eye. On a mecanum the two sides are mirrored, so FL/BL spin one way
@@ -131,12 +144,62 @@ class PreFlightCheck : LinearOpMode() {
             "Drive polarity",
             polarities.joinToString(" ") + "  (mirror check: FL/BL same, FR/BR same)",
         )
+        checkDriveEncoderMotion(names)
+    }
+
+    private fun checkDriveEncoderMotion(names: List<Pair<String, String>>) {
+        val motors = names.map { hardwareMap.get(DcMotor::class.java, it.second) }
+        val before = motors.map { it.currentPosition }
+        val moved = BooleanArray(motors.size)
+        motors.forEach {
+            it.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
+            it.power = 0.0
+            it.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.FLOAT
+        }
+
+        val deadline = System.nanoTime() + ENCODER_MOTION_TIMEOUT_MS * 1_000_000L
+        var skipped = false
+        while (opModeIsActive() && System.nanoTime() < deadline && moved.any { !it }) {
+            for (i in motors.indices) {
+                if (!moved[i] && encoderMoved(before[i], motors[i].currentPosition, ENCODER_MOTION_MIN_TICKS)) {
+                    moved[i] = true
+                }
+            }
+            telemetry.clearAll()
+            telemetry.addLine("Twist EACH drive wheel by hand — motors are OFF")
+            telemetry.addLine("A = skip remaining motion checks")
+            telemetry.addData("Time left", "%.1f s".format((deadline - System.nanoTime()) / 1e9))
+            for (i in names.indices) {
+                telemetry.addData(names[i].first, if (moved[i]) "MOVED" else "twist now…")
+            }
+            telemetry.update()
+            if (gamepad1.a) {
+                skipped = true
+                break
+            }
+            sleep(50)
+        }
+        motors.forEach {
+            it.power = 0.0
+            it.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
+        }
+
+        for (i in names.indices) {
+            when {
+                moved[i] -> pass("Encoder ${names[i].first}", "manual movement detected")
+                skipped -> warn("Encoder ${names[i].first}", "motion check skipped — unverified")
+                else -> fail(
+                    "Encoder ${names[i].first}",
+                    "no movement in ${ENCODER_MOTION_TIMEOUT_MS / 1000}s — check encoder/wiring",
+                )
+            }
+        }
     }
 
     // ----------------------------------------------------------------- IMU
 
     private fun checkImu() {
-        val hw = HardwareProbe.probe(hardwareMap)
+        val hw = hardware
         if (!hw.imu) {
             warn(
                 "IMU",
@@ -211,7 +274,7 @@ class PreFlightCheck : LinearOpMode() {
     // ------------------------------------------------------------ flywheels
 
     private fun checkFlywheels() {
-        val hw = HardwareProbe.probe(hardwareMap)
+        val hw = hardware
         if (!hw.anyFlywheel) {
             fail("Flywheels", "neither flywheel motor is configured")
             return
@@ -229,16 +292,13 @@ class PreFlightCheck : LinearOpMode() {
             val deadline = System.currentTimeMillis() + 2500
             var left = 0.0
             var right = 0.0
-            while (System.currentTimeMillis() < deadline) {
+            while (opModeIsActive() && System.currentTimeMillis() < deadline) {
                 NextMotor.motorEventLoop.poll()
                 left = flywheel.measuredLeftRpm()
                 right = flywheel.measuredRightRpm()
                 if (left > 100.0 && right > 100.0) break
                 sleep(30)
             }
-            flywheel.stop(breakMotor = true)
-            NextMotor.motorEventLoop.poll()
-
             if (left < 100.0 || right < 100.0) {
                 fail(
                     "Flywheels",
@@ -256,13 +316,19 @@ class PreFlightCheck : LinearOpMode() {
             )
         } catch (e: Exception) {
             fail("Flywheels", "error: ${e.message ?: e.javaClass.simpleName}")
+        } finally {
+            try {
+                flywheel.stop(breakMotor = true)
+                NextMotor.motorEventLoop.poll()
+            } catch (_: Exception) {
+            }
         }
     }
 
     // ------------------------------------------------------- intake/loader
 
     private fun checkIntakeAndLoader() {
-        val hw = HardwareProbe.probe(hardwareMap)
+        val hw = hardware
         if (!hw.intakeMotor) {
             warn("Intake", "not configured — the robot cannot collect balls")
         } else {
@@ -284,7 +350,7 @@ class PreFlightCheck : LinearOpMode() {
     // -------------------------------------------------------------- cameras
 
     private fun checkCameras() {
-        val hw = HardwareProbe.probe(hardwareMap)
+        val hw = hardware
         if (hw.vision) {
             pass("Cameras", "both configured (UP + FRONT)")
         } else {
@@ -302,9 +368,6 @@ class PreFlightCheck : LinearOpMode() {
     // --------------------------------------------------------------- report
 
     private fun report() {
-        val fails = results.count { it.isFail }
-        val warns = results.count { it.isWarn }
-
         // Battery: under load it must be above the safe minimum.
         val volts = try {
             hardwareMap.voltageSensor.iterator().next().voltage
@@ -324,6 +387,8 @@ class PreFlightCheck : LinearOpMode() {
             warn("Battery", "could not read the voltage sensor")
         }
 
+        val fails = results.count { it.isFail }
+        val warns = results.count { it.isWarn }
         telemetry.clearAll()
         telemetry.addLine("===== PRE-FLIGHT REPORT =====")
         for (r in results) {
@@ -349,13 +414,13 @@ class PreFlightCheck : LinearOpMode() {
     // ------------------------------------------------------------- helpers
 
     private fun motorPresent(name: String): Boolean = try {
-        hardwareMap.tryGet(DcMotorEx::class.java, name) != null
+        hardwareMap.tryGet(DcMotor::class.java, name) != null
     } catch (_: Exception) {
         false
     }
 
     private fun motorPosition(name: String): Int? = try {
-        hardwareMap.get(DcMotorEx::class.java, name).currentPosition
+        hardwareMap.get(DcMotor::class.java, name).currentPosition
     } catch (_: Exception) {
         null
     }
@@ -366,5 +431,11 @@ class PreFlightCheck : LinearOpMode() {
 
         /** Minimum battery voltage under load to compete. */
         const val BATTERY_MIN_VOLTS = 12.0
+
+        const val ENCODER_MOTION_TIMEOUT_MS = 12_000L
+        const val ENCODER_MOTION_MIN_TICKS = 30
     }
 }
+
+internal fun encoderMoved(before: Int, after: Int, minimumDeltaTicks: Int): Boolean =
+    kotlin.math.abs(after.toLong() - before.toLong()) >= minimumDeltaTicks

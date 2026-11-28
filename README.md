@@ -159,7 +159,7 @@ Print this page. Follow it top to bottom.
 4. **Shooter test.** Run **Flywheel Direction Test**, hold **X**. Both wheels
    spin and counter-rotate.
 5. **Vision test** (only if the robot will run autonomous): run
-   **Vision Test OpMode** and confirm the ball blobs appear.
+   **Neural Net Test** and confirm the expected HSV targets appear.
 6. **Autonomous test** (only if running auto): run **Simple 50cm Out-Back**.
    It must drive forward 50 cm and return.
 
@@ -1040,20 +1040,14 @@ measure, and the horizontal FOV should land around 55–60° for a C270.
 
 ## 9.4 Tuning the ball colors
 
-Run **Vision Test OpMode** (Test group):
+Run the desktop calibrator with a game piece under the camera in competition lighting:
 
-```
-Bumpers (LB/RB)     → Cycle target: Pollen, Nectar Blue, Nectar Red, Nectar Red Wrap, Flower, Robot
-D-pad ↑/↓           → Select H/S/V Min/Max
-D-pad ←/→           → Adjust value (-1)
-X + D-pad ←/→       → Adjust value (-10 / +10)
-A                   → Toggle the calibration overlay
+```bash
+python3 tools/hsv_calibrator.py --camera 0
 ```
 
-1. Put a game piece under the FRONT camera in competition lighting.
-2. Adjust until the overlay box hugs the piece tightly with no noise.
-3. Press **A** to confirm the overlay matches the piece.
-4. Copy the values from telemetry into the `globals.kt` HSV constants.
+Adjust until the overlay box hugs the piece tightly with no noise, then copy the
+paste-ready values into the `globals.kt` HSV constants.
 
 ### Current HSV defaults
 
@@ -1066,8 +1060,6 @@ FLOWER_GREEN_HSV_RANGE    = intArrayOf(45, 80, 50, 255, 50, 255)
 ROBOT_DARK_HSV_RANGE      = intArrayOf(0, 180, 0, 120, 0, 90)
 ```
 
-There is also a desktop tool: `tools/hsv_calibrator.py` (GUI with sliders;
-prints a paste-ready `ColorRange(...)` block).
 
 ## 9.5 Validating vision before autonomous
 
@@ -1445,18 +1437,14 @@ Every OpMode on the Driver Station, what it is for, and when to use it.
 
 | OpMode | What it does | Use it when |
 |--------|--------------|-------------|
-| **PRE-FLIGHT CHECK** | Checks every subsystem, prints PASS/WARN/FAIL | **Before every match.** Start here |
+| **PRE-FLIGHT CHECK** | Checks every subsystem, verifies manual encoder movement, holds PASS/WARN/FAIL on screen | **Before every match.** Start here |
 | **Wheel Direction Test** | Spins one drive wheel at a time | The robot drives the wrong way (6.2) |
 | **Flywheel Direction Test** | Spins one flywheel at a time | The ball shoots backward or sideways (8.2) |
 | **Drive Direction Check** | Drives 50 cm, shows the pose | The robot's position estimate is wrong (6.3) |
-| **Drivetrain Setup & Verify** | Shows all derived constants; spin test, 50 cm crawl, live encoders | You want to see every derived number |
 | **Flywheel Calibration** | Steps the flywheel through RPMs and fires one ball per step | You are measuring the shooter curve (8.4) |
-| **Vision Test OpMode** | Live HSV tuning for every game piece color | The robot cannot see balls (9.4) |
 | **Visual Localization Test** | 6 vision checks (stationary, rotation, translation, ...) | Before enabling autonomous vision (9.5) |
 | **Camera Calibration (C270)** | Measures the camera focal length | Distances or aiming are wrong (9.3) |
-| **Drive Only (hub + motors)** | Drives with ONLY the hub and drive motors | Isolating a drive problem from everything else |
 | **Neural Net Test** | Shows the neural detector and P(hit) table | Diagnostic only — classical CV is what the robot uses |
-| **Experiment (test bench)** | Runs a scripted bench sequence | Writing your own bench test |
 
 ### The two competition OpModes
 
@@ -1832,7 +1820,7 @@ ROBOT_PHYSICAL_WIDTH_MM = 450.0
 | Verify odometry | Drive Direction Check | `driveconfig.kt` |
 | Verify flywheel direction | Flywheel Direction Test | `globals.kt` |
 | Prove the robot is ready | **PRE-FLIGHT CHECK** | — |
-| Tune HSV ranges | Vision Test OpMode | `globals.kt` |
+| Tune HSV ranges | `tools/hsv_calibrator.py` | `globals.kt` |
 | Calibrate camera focal length | Camera Calibration (C270) | `vision/VisionConfig.kt` |
 | Calibrate the shooter | Flywheel Calibration | `globals.kt` |
 | Tune RR drive | (FTC Dashboard) | `roadrunner/MecanumDrive.kt` |

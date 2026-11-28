@@ -80,6 +80,8 @@ class BioBuzzTeleOp : LinearOpMode() {
     // Y button swaps between main (vision-assist) driving and JJ raw-stick driving.
     private var useJjDrive = false
     private var lastJjToggleBtn = false
+    private val anchorBudget = BoundedIntervention((ANCHOR_MAX_MS * 1e6).toLong())
+    private val poseHoldBudget = BoundedIntervention((TELEOP_HOLD_MAX_MS * 1e6).toLong())
 
     override fun runOpMode() {
         // ---- BOOT HARDWARE PROBE: degrade gracefully if anything's missing ----
@@ -327,7 +329,10 @@ class BioBuzzTeleOp : LinearOpMode() {
             // Also allow manual engage via RIGHT_BUMPER + LEFT_BUMPER combo.
             val pushed = locator?.isBeingPushed == true
             val manualAnchor = ANCHOR_ENGAGE_GAMEPAD && gamepad1.right_bumper && gamepad1.left_bumper
-            if (pushed || manualAnchor) {
+            val anchorRequested = pushed || manualAnchor
+            val anchorAllowed = anchorBudget.allowed(anchorRequested, System.nanoTime())
+            val anchorPaused = anchorRequested && !anchorAllowed
+            if (anchorAllowed) {
                 locator?.setAnchorManual(manualAnchor)
                 if (locator != null) {
                     // Hold the pose at the moment push was detected (or now if manual).
@@ -426,9 +431,11 @@ class BioBuzzTeleOp : LinearOpMode() {
                 } else {
                     pinTimerNanos = 0L
                     if (escapePhase != EscapePhase.NONE) {
-                        // Reset if we're free
                         escapePhase = EscapePhase.NONE
                         escapeStartPose = null
+                    }
+                    if ((now - lastEscapeNanos) / 1e6 > ESCAPE_COOLDOWN_MS) {
+                        escapeAttempts = 0
                     }
                 }
 
@@ -473,6 +480,14 @@ class BioBuzzTeleOp : LinearOpMode() {
                 }
             }
 
+            val idleDriveInput = abs(forward) < TELEOP_INPUT_DEADZONE &&
+                abs(strafe) < TELEOP_INPUT_DEADZONE &&
+                abs(turn) < TELEOP_INPUT_DEADZONE
+            var poseHoldPaused = false
+            if (locator == null || !poseHold || useJjDrive || !idleDriveInput) {
+                poseHoldBudget.allowed(false, System.nanoTime())
+            }
+
             // ---- drive ----
             if (useJjDrive) {
                 // JJ driving scheme: raw stick -> driveTeleOp, no assists.
@@ -487,22 +502,24 @@ class BioBuzzTeleOp : LinearOpMode() {
             } else {
                 // ---- POSE HOLD: sticks released -> hold the last still pose ----
                 if (locator != null && poseHold) {
-                    val idleInput = abs(forward) < TELEOP_INPUT_DEADZONE &&
-                        abs(strafe) < TELEOP_INPUT_DEADZONE &&
-                        abs(turn) < TELEOP_INPUT_DEADZONE
-                    if (idleInput) {
+                    if (idleDriveInput) {
                         if (stillPose == null) stillPose = locator.pose
-                        // Body-frame twist back to the still pose (+x fwd, +y left, +angle CCW)
                         val err = stillPose!!.minus(locator.pose)
-                        val hf = (TELEOP_HOLD_POSITION_KP * err.line.x)
-                            .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
-                        val hs = (TELEOP_HOLD_POSITION_KP * err.line.y)
-                            .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
-                        val ht = (TELEOP_HOLD_HEADING_KP * Math.toDegrees(err.angle))
-                            .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
-                        forward = (forward + hf).coerceIn(-1.0, 1.0)
-                        strafe = (strafe + hs).coerceIn(-1.0, 1.0)
-                        turn = (turn + ht).coerceIn(-1.0, 1.0)
+                        val correctionNeeded = err.line.norm() > TELEOP_HOLD_POS_TOLERANCE_IN ||
+                            abs(Math.toDegrees(err.angle)) > TELEOP_HOLD_HEADING_TOLERANCE_DEG
+                        val holdAllowed = poseHoldBudget.allowed(correctionNeeded, System.nanoTime())
+                        if (holdAllowed) {
+                            val hf = (TELEOP_HOLD_POSITION_KP * err.line.x)
+                                .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
+                            val hs = (TELEOP_HOLD_POSITION_KP * err.line.y)
+                                .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
+                            val ht = (TELEOP_HOLD_HEADING_KP * Math.toDegrees(err.angle))
+                                .coerceIn(-TELEOP_HOLD_MAX_POWER, TELEOP_HOLD_MAX_POWER)
+                            forward = (forward + hf).coerceIn(-1.0, 1.0)
+                            strafe = (strafe + hs).coerceIn(-1.0, 1.0)
+                            turn = (turn + ht).coerceIn(-1.0, 1.0)
+                        }
+                        poseHoldPaused = correctionNeeded && !holdAllowed
                     } else {
                         stillPose = null
                     }
@@ -560,6 +577,8 @@ class BioBuzzTeleOp : LinearOpMode() {
                 shadowWorld.logToBlackBox()
             }
             if (tipping) telemetry.addLine("!! TILT GUARD — drive power cut !!")
+            if (anchorPaused) telemetry.addLine("ANCHOR PAUSED — clear push/release bumpers to re-arm")
+            if (poseHoldPaused) telemetry.addLine("POSE HOLD PAUSED — move sticks to re-arm")
             telemetry.addData("LOADER", "%d strokes fired".format(loader.strokeCount))
 
             telemetry.addData(

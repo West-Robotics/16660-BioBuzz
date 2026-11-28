@@ -58,8 +58,8 @@ object DrivetrainSpec {
     /**
      * True when the pod's encoder COUNTS UP while the robot is pushed
      * FORWARD (par/perp) / LEFT (perp). Determined by which way you plugged
-     * the pod in — the "Drivetrain Setup & Verify" OpMode steps you through
-     * it; set the flag to match, never rewire the hub.
+     * the pod in — verify it with Drive Direction Check; set the flag to match,
+     * never rewire the hub.
      */
     const val PAR0_REVERSED = false
     const val PAR1_REVERSED = false

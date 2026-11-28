@@ -76,3 +76,27 @@ object ControlFrame {
         tick()
     }
 }
+
+internal class BoundedIntervention(private val maxDurationNanos: Long) {
+    private var startedNanos: Long? = null
+    private var exhausted = false
+
+    fun allowed(requested: Boolean, nowNanos: Long): Boolean {
+        if (!requested) {
+            startedNanos = null
+            exhausted = false
+            return false
+        }
+        if (exhausted) return false
+        val started = startedNanos
+        if (started == null) {
+            startedNanos = nowNanos
+            return true
+        }
+        if (nowNanos - started >= maxDurationNanos) {
+            exhausted = true
+            return false
+        }
+        return true
+    }
+}

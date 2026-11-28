@@ -192,6 +192,9 @@ const val TELEOP_INPUT_DEADZONE = 0.08       // sticks inside this count as "rel
 const val TELEOP_HOLD_POSITION_KP = 0.06      // hold correction power per INCH of drift (RR pose is inches)
 const val TELEOP_HOLD_HEADING_KP = 0.02      // hold turn power per degree of heading drift
 const val TELEOP_HOLD_MAX_POWER = 0.25       // cap on any single hold correction
+const val TELEOP_HOLD_MAX_MS = 2000.0        // then pause until fresh driver input (bench-safe)
+const val TELEOP_HOLD_POS_TOLERANCE_IN = 0.25
+const val TELEOP_HOLD_HEADING_TOLERANCE_DEG = 2.0
 
 // ================== ANTI-RAMMING / PUSH-RESISTANCE ==================
 // Push detection: when measured velocity diverges from commanded, an
@@ -206,6 +209,7 @@ const val ANCHOR_MAX_POWER = 0.85              // max corrective power during an
 const val ANCHOR_KP_POS = 0.15                 // position gain during anchor (per inch)
 const val ANCHOR_KP_HEADING = 0.08             // heading gain during anchor (per deg)
 const val ANCHOR_ENGAGE_GAMEPAD = true         // also allow manual engage via RIGHT_BUMPER+LB combo
+const val ANCHOR_MAX_MS = 1500.0               // then pause until the push condition clears
 
 // Vision fusion tightening on push: when pushed, trust vision corrections more
 const val PUSH_FUSION_MAX_GAIN = 0.35          // override FUSION_MAX_GAIN during push
@@ -433,7 +437,7 @@ fun teamClusterNames(team: TeamColor): Set<String> = when (team) {
 // HSV Ranges for BIOBUZZ (OpenCV hue H runs 0-180).
 // The bands are separated by DEAD BANDS so venue lighting can't bleed one
 // game piece into another:  red 0-12  |  pollen 14-35  |  flower 45-80.
-// Re-tune on-site with the "Vision Test OpMode" if detections misfire.
+// Re-tune on-site with tools/hsv_calibrator.py if detections misfire.
 val POLLEN_HSV_RANGE = ColorRange(
     ColorSpace.HSV,
     Scalar(14.0, 100.0, 100.0),
